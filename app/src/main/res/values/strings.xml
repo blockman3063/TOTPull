@@ -131,9 +131,9 @@
     <string name="info_section_about">关于</string>
 
     <string name="info_level_full">全功能模式</string>
+    <string name="info_level_module">模块模式</string>
     <string name="info_level_standard">标准模式</string>
     <string name="info_level_partial">部分就绪</string>
-    <string name="info_level_basic">基础模式</string>
     <string name="info_level_busy">等待授权</string>
     <string name="info_level_undetected">未检测</string>
 

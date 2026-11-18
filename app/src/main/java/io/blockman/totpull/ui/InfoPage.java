@@ -109,14 +109,16 @@ public class InfoPage {
             bg = R.drawable.bg_status_warn;
         } else if (moduleOk) {
             // The module answers from inside the target app; only the root fast path is missing.
-            title = str(R.string.info_level_standard);
+            // This is a working state, not the plain no-privilege one.
+            title = str(R.string.info_level_module);
             bg = R.drawable.bg_status_warn;
         } else if (state == Capabilities.ROOT_TIMEOUT) {
             title = str(R.string.info_level_busy);
             bg = R.drawable.bg_status_bad;
             textColor = R.color.status_bad_text;
         } else if (decided) {
-            title = str(R.string.info_level_basic);
+            // No root granted and the module has never answered: no privileges at all.
+            title = str(R.string.info_level_standard);
             bg = R.drawable.bg_status_warn;
         } else {
             title = str(R.string.info_level_undetected);
@@ -176,7 +178,14 @@ public class InfoPage {
     private void bindAbout() {
         _groupAbout.removeAllViews();
         addRow(_groupAbout, str(R.string.row_version), versionName(), R.color.text_secondary);
-        addRow(_groupAbout, str(R.string.row_target), "Riot Mobile", R.color.text_secondary);
+        StringBuilder targets = new StringBuilder();
+        for (MainActivity.ExtractTarget t : MainActivity.EXTRACT_TARGETS) {
+            if (targets.length() > 0) {
+                targets.append(" / ");
+            }
+            targets.append(t.label);
+        }
+        addRow(_groupAbout, str(R.string.row_target), targets.toString(), R.color.text_secondary);
     }
 
     // ------------------------------------------------------------------ row builders
