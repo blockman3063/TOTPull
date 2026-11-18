@@ -74,13 +74,15 @@ public class InfoPage {
             boolean root = Capabilities.hasRoot(_activity);
             int state = Capabilities.cachedRootState(_activity);
             boolean decided = Capabilities.isRootDecided(_activity);
-            boolean moduleOk = Boolean.TRUE.equals(moduleReady);
-            // Handshake flag: the framework injected this app, so the module is installed and in
-            // scope here. Independent of root and of whether the target app is running.
-            boolean injected = HookStatus.isActive();
+            // Whether the module actually works here, from two independent signals:
+            //  - moduleReady: a probe once succeeded, so the module answered from inside the
+            //    target app. This is the only signal that exists under LSPosed.
+            //  - HookStatus: the framework injected *this* app. LSPosed refuses to let a module
+            //    target its own package, so on LSPosed this stays false; LSPatch can still set it.
+            boolean moduleOk = Boolean.TRUE.equals(moduleReady) || HookStatus.isActive();
 
-            bindStatus(root, state, decided, moduleOk, injected);
-            bindPermissions(root, state, decided, injected);
+            bindStatus(root, state, decided, moduleOk);
+            bindPermissions(root, state, decided, moduleOk);
             bindFeatures(root, moduleOk);
             bindAbout();
 
@@ -93,8 +95,7 @@ public class InfoPage {
 
     // ------------------------------------------------------------------ status card
 
-    private void bindStatus(boolean root, int state, boolean decided, boolean moduleOk,
-                            boolean injected) {
+    private void bindStatus(boolean root, int state, boolean decided, boolean moduleOk) {
         String title;
         int bg;
         int textColor = R.color.status_warn_text;
@@ -106,8 +107,8 @@ public class InfoPage {
         } else if (root) {
             title = str(R.string.info_level_partial);
             bg = R.drawable.bg_status_warn;
-        } else if (injected) {
-            // Framework works here, just without the root fast path.
+        } else if (moduleOk) {
+            // The module answers from inside the target app; only the root fast path is missing.
             title = str(R.string.info_level_standard);
             bg = R.drawable.bg_status_warn;
         } else if (state == Capabilities.ROOT_TIMEOUT) {
@@ -130,7 +131,7 @@ public class InfoPage {
 
     // ------------------------------------------------------------------ permission rows
 
-    private void bindPermissions(boolean root, int state, boolean decided, boolean injected) {
+    private void bindPermissions(boolean root, int state, boolean decided, boolean moduleOk) {
         _groupPerm.removeAllViews();
 
         String rootValue;
@@ -150,11 +151,11 @@ public class InfoPage {
         }
         addRow(_groupPerm, str(R.string.row_root), rootValue, rootColor);
 
-        // Read straight from our own process: the module sets this flag when the framework
-        // injects us, which is the same handshake Xposed modules use to report their own state.
+        // The module proving itself from inside the target app is the only state that matters;
+        // whether it can also inject this app is a framework detail LSPosed does not allow.
         addRow(_groupPerm, str(R.string.row_lsposed),
-                str(injected ? R.string.row_lsposed_on : R.string.row_lsposed_off),
-                injected ? R.color.status_ok_text : R.color.text_secondary);
+                str(moduleOk ? R.string.row_lsposed_on : R.string.row_lsposed_off),
+                moduleOk ? R.color.status_ok_text : R.color.text_secondary);
     }
 
     // ------------------------------------------------------------------ feature rows

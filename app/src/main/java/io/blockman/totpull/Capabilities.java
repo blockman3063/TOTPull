@@ -118,9 +118,11 @@ public final class Capabilities {
     }
 
     public static void setModuleReady(Context context, Boolean ready) {
+        // commit(): this is also written from ProbeReceiver, right before the process gets
+        // frozen, where a queued apply() would never reach the disk.
         prefs(context).edit()
                 .putInt(KEY_MODULE, ready == null ? -1 : (ready ? 1 : 0))
-                .apply();
+                .commit();
     }
 
     // ------------------------------------------------------------------ root

@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Only used for the "code was read" notification; the app never talks to the network. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+
     <!-- Android 11+ 需要显式声明才能查询/唤起待提取的目标应用 -->
     <queries>
         <package android:name="com.riotgames.mobile.leagueconnect" />
@@ -66,6 +70,17 @@
             android:name=".ui.EditEntryActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
+
+        <!-- Manifest-declared so the answer still arrives while this app sits in the background
+             and the system has frozen its process. A runtime receiver is not seen as live in that
+             state, so the broadcast would be dropped. -->
+        <receiver
+            android:name=".ProbeReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="io.blockman.totpull.action.RESULT" />
+            </intent-filter>
+        </receiver>
 
         <meta-data
             android:name="xposedmodule"

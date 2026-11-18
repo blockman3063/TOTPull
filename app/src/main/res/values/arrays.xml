@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!--
-      建议作用域：目标应用 + 本应用自身。
-      把自己也放进作用是「握手」的前提——框架把模块注入本 App 进程后，模块才能把
-      HookStatus.ACTIVE 置位，信息页据此显示 LSPosed 是否真的生效，不需要 root。
+      建议作用域：只放目标应用。
+      早先这里还放了本应用自身，想让框架把模块注入自己的进程来「握手」；但 LSPosed 会明确拒绝
+      「模块把自身加入作用域」（module cannot target itself），所以那条路在 LSPosed 上走不通。
+      现在模块是否可用改由「探测是否收到目标应用的回应」判定，不需要自注入。
     -->
     <string-array name="xposedscope">
         <item>com.riotgames.mobile.leagueconnect</item>
-        <item>io.blockman.totpull</item>
     </string-array>
 </resources>

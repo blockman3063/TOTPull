@@ -1,11 +1,9 @@
 package io.blockman.totpull.ui;
 
-import android.content.BroadcastReceiver;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
-import android.content.IntentFilter;
 import android.content.res.ColorStateList;
 import android.graphics.Typeface;
 import android.net.Uri;
@@ -33,6 +31,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import io.blockman.totpull.Capabilities;
+import io.blockman.totpull.ProbeReceiver;
 import io.blockman.totpull.R;
 import io.blockman.totpull.TotpEntry;
 import io.blockman.totpull.TotpGenerator;
@@ -45,10 +44,18 @@ public class MainActivity extends AppCompatActivity {
     public static final String EXTRA_SOURCE_LABEL = "source_label";
 
     private static final int REQ_OPEN_FILE = 1001;
+    /** Asked right before we leave for the source app, so the answer can call us back. */
+    private static final int REQ_NOTIFY = 1002;
 
     /** Broadcast exchanged with the Xposed module running inside the source app. */
     static final String ACTION_PROBE = "io.blockman.totpull.action.PROBE";
     static final String ACTION_RESULT = "io.blockman.totpull.action.RESULT";
+
+    /** Retry schedule while the source app boots up; all of them fire only if still waiting. */
+    private static final int[] PROBE_RETRY_MS = {1200, 3000, 5500, 9000};
+
+    /** How long a round stays open before the UI calls it a timeout. */
+    private static final long PROBE_TIMEOUT_MS = 60_000L;
 
     /**
      * Apps we know how to pull codes out of. Each entry needs a matching extractor on the module
@@ -89,11 +96,6 @@ public class MainActivity extends AppCompatActivity {
 
     /** Non-null while we are waiting for the module to answer a probe. */
     private ExtractTarget _pendingProbe;
-    private int _probeRound;
-    private boolean _receiverRegistered;
-    /** Set after the user agrees to open the source app; the probe resumes on return. */
-    private ExtractTarget _awaitingWake;
-    private String _lastProbeError;
     /** null = not yet determined, TRUE = the module has usable data, FALSE = it does not. */
     private Boolean _moduleReady = null;
 
@@ -153,7 +155,6 @@ public class MainActivity extends AppCompatActivity {
         setUpNavigation();
         reload();
 
-        registerProbeReceiver();
         handleIntent(getIntent());
 
         if (!Capabilities.isSetupDone(this)) {
@@ -262,15 +263,8 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
-        if (_receiverRegistered) {
-            try {
-                unregisterReceiver(_probeResultReceiver);
-            } catch (Throwable ignored) {
-            }
-            _receiverRegistered = false;
-        }
         _pendingProbe = null;
-        _handler.removeCallbacks(_probeStep);
+        _handler.removeCallbacks(_probeTimeout);
         _handler.removeCallbacks(_tick);
         super.onDestroy();
     }
@@ -281,12 +275,9 @@ public class MainActivity extends AppCompatActivity {
         reload();
         _handler.post(_tick);
 
-        // Coming back from "go open the source app": that app is now running, so retry once.
-        ExtractTarget target = _awaitingWake;
-        if (target != null && _pendingProbe == null) {
-            _awaitingWake = null;
-            _handler.postDelayed(() -> startProbe(target), 400);
-        }
+        // The answer is delivered to ProbeReceiver, possibly while this activity was not running.
+        // Show whatever came back as soon as we are back in front of the user.
+        showProbeReport();
 
         if (_moduleReady == null && Capabilities.hasRoot(this)) {
             new Thread(() -> {
@@ -672,70 +663,55 @@ public class MainActivity extends AppCompatActivity {
 
     // ------------------------------------------------------------------ on-demand extraction
 
-    private void registerProbeReceiver() {
-        if (_receiverRegistered) {
+    /**
+     * Shows the outcome of the last round. The answer itself is handled by {@link ProbeReceiver},
+     * which survives this activity being backgrounded or killed.
+     */
+    private void showProbeReport() {
+        JSONObject report = ProbeReceiver.takeReport(this);
+        if (report != null) {
+            _pendingProbe = null;
+            _handler.removeCallbacks(_probeTimeout);
+            ProbeReceiver.clearPending(this);
+
+            boolean ok = report.optBoolean("ok", false);
+            boolean duplicate = report.optBoolean("duplicate", false);
+            String name = report.optString("name", "");
+            String error = report.optString("error", "");
+            String message;
+            if (ok) {
+                message = getString(duplicate ? R.string.report_duplicate : R.string.report_ok,
+                        name);
+            } else {
+                message = getString(R.string.report_failed, error);
+            }
+            new MaterialAlertDialogBuilder(this)
+                    .setTitle(R.string.report_title)
+                    .setMessage(message)
+                    .setPositiveButton(R.string.report_stay, null)
+                    .show();
+
+            setModuleReady(Boolean.TRUE);
+            reload();
+            refreshInfo();
             return;
         }
-        IntentFilter filter = new IntentFilter(ACTION_RESULT);
-        try {
-            if (Build.VERSION.SDK_INT >= 33) {
-                registerReceiver(_probeResultReceiver, filter, Context.RECEIVER_EXPORTED);
-            } else {
-                registerReceiver(_probeResultReceiver, filter);
-            }
-            _receiverRegistered = true;
-        } catch (Throwable ignored) {
+
+        // Nothing came back and the round has been open for too long: tell the user instead of
+        // leaving them wondering why they were bounced into the other app.
+        long since = ProbeReceiver.pendingSince(this);
+        if (since > 0 && System.currentTimeMillis() - since > PROBE_TIMEOUT_MS) {
+            ProbeReceiver.clearPending(this);
+            String label = _pendingProbe == null ? "Riot Mobile" : _pendingProbe.label;
+            _pendingProbe = null;
+            _handler.removeCallbacks(_probeTimeout);
+            new MaterialAlertDialogBuilder(this)
+                    .setTitle(R.string.report_title)
+                    .setMessage(getString(R.string.report_timeout, label))
+                    .setPositiveButton(R.string.report_stay, null)
+                    .show();
         }
     }
-
-    private final BroadcastReceiver _probeResultReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            if (intent == null || !ACTION_RESULT.equals(intent.getAction())) {
-                return;
-            }
-            ExtractTarget target = _pendingProbe;
-            if (target == null) {
-                // Late answer from a previous round; nothing is waiting for it.
-                return;
-            }
-
-            if (!intent.getBooleanExtra("ok", false)) {
-                // A cloned copy of the app can answer too, and it may simply have no seed in it.
-                // Keep waiting for a sibling process that does, but remember why this one failed.
-                String error = intent.getStringExtra("error");
-                _lastProbeError = error != null && !error.isEmpty() ? error : null;
-                return;
-            }
-
-            _pendingProbe = null;
-            _lastProbeError = null;
-            _handler.removeCallbacks(_probeStep);
-
-            String uri = intent.getStringExtra("otpauth");
-            TotpEntry entry = uri == null ? null : TotpEntry.fromOtpauth(uri);
-            if (entry == null) {
-                toast(getString(R.string.probe_empty, target.label));
-                return;
-            }
-
-            String sourcePackage = intent.getStringExtra("source_package");
-            String sourceLabel = intent.getStringExtra("source_label");
-            if (sourcePackage != null) {
-                entry.sourcePackage = sourcePackage;
-            }
-            if (sourceLabel != null) {
-                entry.sourceLabel = sourceLabel;
-            }
-            String note = intent.getStringExtra("note");
-            if (note != null) {
-                entry.note = note;
-            }
-            setModuleReady(Boolean.TRUE);
-            addEntry(entry);
-            refreshInfo();
-        }
-    };
 
     /**
      * Starts an import from a source app.
@@ -808,13 +784,65 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    /**
+     * Asks the source app for the seed while keeping it in front of the user.
+     *
+     * <p>The module only answers from a live process, so the source app is launched right away
+     * instead of waiting for it to time out in the background. Retries cover the few seconds that
+     * process needs to boot and register its receiver. Answers land in {@link ProbeReceiver},
+     * which is manifest-declared and therefore still receives them after this activity is
+     * backgrounded.
+     */
     private void probeViaBroadcast(ExtractTarget target) {
         _pendingProbe = target;
-        _probeRound = 0;
-        _lastProbeError = null;
-        toast(getString(R.string.probe_requesting, target.label));
-        sendProbe(target);
-        _handler.postDelayed(_probeStep, 900);
+        ProbeReceiver.markPending(this);
+
+        // The answer arrives while this activity is in the background, and Android 10+ blocks a
+        // receiver from bringing us back. A notification carrying the return trip is the reliable
+        // path, so the permission is worth asking for before we leave rather than after the fact.
+        if (needsNotificationPermission()) {
+            requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS},
+                    REQ_NOTIFY);
+            return;
+        }
+        startProbeRound(target);
+    }
+
+    /** Launches the source app and starts asking it for the seed. */
+    private void startProbeRound(ExtractTarget target) {
+        toast(getString(R.string.probe_go_hint, target.label));
+
+        launchTarget(target);
+        for (int delay : PROBE_RETRY_MS) {
+            _handler.postDelayed(() -> {
+                if (_pendingProbe == null) {
+                    return;
+                }
+                sendProbe(target);
+            }, delay);
+        }
+        _handler.postDelayed(_probeTimeout, PROBE_TIMEOUT_MS);
+    }
+
+    private boolean needsNotificationPermission() {
+        return Build.VERSION.SDK_INT >= 33 && checkSelfPermission(
+                android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm
+                .PackageManager.PERMISSION_GRANTED;
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions,
+                                          int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode != REQ_NOTIFY) {
+            return;
+        }
+        // Either answer lets the round go ahead; without the permission we simply fall back to
+        // trying to start the activity and, failing that, to the report on next launch.
+        ExtractTarget target = _pendingProbe;
+        if (target != null) {
+            startProbeRound(target);
+        }
     }
 
     private void sendProbe(ExtractTarget target) {
@@ -823,44 +851,8 @@ public class MainActivity extends AppCompatActivity {
         sendBroadcast(probe);
     }
 
-    private final Runnable _probeStep = new Runnable() {
-        @Override
-        public void run() {
-            ExtractTarget target = _pendingProbe;
-            if (target == null) {
-                return;
-            }
-            _probeRound++;
-            if (_probeRound < 3) {
-                sendProbe(target);
-                _handler.postDelayed(this, 700);
-                return;
-            }
-            // Nobody answered: the source app is not running, so its module isn't loaded.
-            _pendingProbe = null;
-            showWakeDialog(target);
-        }
-    };
-
-    /**
-     * Offers to open the source app instead of doing it silently. The probe only works while that
-     * app has a live process, and launching it uninvited pops an OEM "which copy?" chooser on
-     * phones with an app clone, so the user gets to decide.
-     */
-    private void showWakeDialog(ExtractTarget target) {
-        String message = _lastProbeError != null
-                ? _lastProbeError
-                : getString(R.string.probe_not_running, target.label);
-        new MaterialAlertDialogBuilder(this)
-                .setTitle(getString(R.string.probe_wake_title, target.label))
-                .setMessage(message)
-                .setPositiveButton(R.string.probe_wake_open, (d, w) -> {
-                    _awaitingWake = target;
-                    launchTarget(target);
-                })
-                .setNegativeButton(R.string.cancel, null)
-                .show();
-    }
+    /** Stops waiting quietly. The dialog itself is driven by the pending timestamp on resume. */
+    private final Runnable _probeTimeout = () -> _pendingProbe = null;
 
     /**
      * Wakes the source app so its module can answer. The launch intent returned by
