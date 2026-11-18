@@ -10,8 +10,17 @@
     <string name="action_from_app">从应用导入</string>
     <string name="action_paste">从剪贴板导入</string>
     <string name="action_file">从文件导入</string>
-    <string name="import_failed">没有识别出可导入的条目（加密备份需要先导出为明文）</string>
+    <string name="import_failed">没有识别出可导入的条目</string>
     <string name="import_ok">从 %1$s 导入了 %2$d 条</string>
+
+    <!-- Aegis 加密备份 -->
+    <string name="import_aegis_title">解密 Aegis 备份</string>
+    <string name="import_aegis_hint">备份密码</string>
+    <string name="import_aegis_working">正在解密备份…</string>
+    <string name="import_aegis_wrong_password">密码不正确</string>
+    <string name="import_aegis_biometric_only">这份备份只绑定了生物识别，请在 Aegis 里改用密码重新导出</string>
+    <string name="import_aegis_bad_format">文件不是有效的 Aegis 加密备份</string>
+    <string name="import_aegis_unsupported">不支持的 Aegis 备份版本</string>
     <string name="action_add">添加</string>
     <string name="copied">已复制 %1$s</string>
     <string name="nothing_in_clipboard">剪贴板里没有 otpauth 链接</string>
@@ -142,7 +151,7 @@
     <string name="row_root_denied">未授予</string>
     <string name="row_root_timeout">无响应</string>
     <string name="row_root_unknown">未检测</string>
-    <string name="row_lsposed">模块</string>
+    <string name="row_lsposed">Lsposed</string>
     <string name="row_lsposed_on">已就绪</string>
     <string name="row_lsposed_off">未就绪</string>
 

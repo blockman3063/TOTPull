@@ -33,9 +33,12 @@ import org.json.JSONObject;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import io.blockman.totpull.Capabilities;
 import io.blockman.totpull.ProbeReceiver;
@@ -43,6 +46,7 @@ import io.blockman.totpull.R;
 import io.blockman.totpull.TotpEntry;
 import io.blockman.totpull.TotpGenerator;
 import io.blockman.totpull.TotpStore;
+import io.blockman.totpull.format.AegisVault;
 import io.blockman.totpull.format.ImportEngine;
 
 public class MainActivity extends AppCompatActivity {
@@ -127,6 +131,8 @@ public class MainActivity extends AppCompatActivity {
     private boolean _vaultWarnShown;
 
     private final Handler _handler = new Handler(Looper.getMainLooper());
+    /** scrypt can take seconds; never run it on the main thread. */
+    private final ExecutorService _importIo = Executors.newSingleThreadExecutor();
     private final Runnable _tick = new Runnable() {
         @Override
         public void run() {
@@ -416,6 +422,7 @@ public class MainActivity extends AppCompatActivity {
         _pendingProbe = null;
         _handler.removeCallbacks(_probeTimeout);
         _handler.removeCallbacks(_tick);
+        _importIo.shutdownNow();
         super.onDestroy();
     }
 
@@ -1095,6 +1102,13 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void applyImport(String text) {
+        // All import paths funnel here, so this is the single place to catch encrypted
+        // Aegis backups: ask for the password off-thread, then feed the decrypted
+        // {"db": ...} back through the unchanged ImportEngine pipeline.
+        if (AegisVault.isEncrypted(text)) {
+            askAegisPassword(text);
+            return;
+        }
         ImportEngine.Result result = ImportEngine.importText(text);
         if (result.isEmpty()) {
             toast(getString(R.string.import_failed));
@@ -1126,6 +1140,70 @@ public class MainActivity extends AppCompatActivity {
 
         String format = result.detectedFormat.isEmpty() ? "文本" : result.detectedFormat;
         toast(getString(R.string.import_ok, format, added));
+    }
+
+    private void askAegisPassword(String text) {
+        View view = getLayoutInflater().inflate(R.layout.dialog_aegis_password, null);
+        EditText input = view.findViewById(R.id.aegis_password);
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.import_aegis_title)
+                .setView(view)
+                .setNegativeButton(R.string.cancel, null)
+                .setPositiveButton(android.R.string.ok, (dialog, which) -> {
+                    String typed = input.getText().toString();
+                    char[] password = typed.toCharArray();
+                    decryptAegis(text, password);
+                })
+                .show();
+    }
+
+    private void decryptAegis(String text, char[] password) {
+        View progressView = getLayoutInflater().inflate(R.layout.dialog_aegis_working, null);
+        final androidx.appcompat.app.AlertDialog progress = new MaterialAlertDialogBuilder(this)
+                .setView(progressView)
+                .setCancelable(false)
+                .show();
+
+        _importIo.execute(() -> {
+            String result = null;
+            AegisVault.Reason failure = null;
+            try {
+                String content = AegisVault.decrypt(text, password);
+                // Wrap as {"db": {...}} so parseAegis() consumes it unchanged.
+                result = new JSONObject().put("db", new JSONObject(content)).toString();
+            } catch (AegisVault.AegisException e) {
+                failure = e.reason;
+            } catch (Exception e) {
+                failure = AegisVault.Reason.BAD_FORMAT;
+            } finally {
+                Arrays.fill(password, '\0');
+            }
+            final String decrypted = result;
+            final AegisVault.Reason error = failure;
+            runOnUiThread(() -> {
+                if (progress.isShowing()) {
+                    progress.dismiss();
+                }
+                if (decrypted != null) {
+                    applyImport(decrypted);
+                } else {
+                    toast(aegisErrorMessage(error));
+                }
+            });
+        });
+    }
+
+    private String aegisErrorMessage(AegisVault.Reason reason) {
+        if (reason == AegisVault.Reason.WRONG_PASSWORD) {
+            return getString(R.string.import_aegis_wrong_password);
+        }
+        if (reason == AegisVault.Reason.BIOMETRIC_ONLY) {
+            return getString(R.string.import_aegis_biometric_only);
+        }
+        if (reason == AegisVault.Reason.UNSUPPORTED) {
+            return getString(R.string.import_aegis_unsupported);
+        }
+        return getString(R.string.import_aegis_bad_format);
     }
 
     private void importFromClipboard() {

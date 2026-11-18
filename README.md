@@ -54,6 +54,10 @@ Tap a code to copy it; long-press an entry to edit or delete it.
 
 Aegis, Bitwarden, FreeOTP, KeePassXC, and Google Authenticator migration URIs are accepted through the share sheet or the add button.
 
+**Aegis supports both export styles.** A plaintext JSON export goes straight through `ImportEngine`. An encrypted backup (vault version 1) is detected by `db` being a base64 string; TOTPull prompts for the backup password, derives the wrapping key with an in-tree RFC 7914 scrypt implementation (no external BouncyCastle dependency — Android's boot classpath ships a trimmed one), unwraps the master key, decrypts the database, and feeds the result through the same plaintext parser. The scrypt code is verified against the RFC test vectors and Python's `hashlib.scrypt`.
+
+Only password slots can be opened. Backups protected solely by Aegis' biometric slot are bound to Aegis' own AndroidKeyStore entry and cannot be decrypted elsewhere — re-export with a password in that case. scrypt runs on a background executor; the password `char[]` is zeroed after use and never persisted.
+
 ## Storage
 
 Entries are written as a single AES/GCM blob (`vault.bin`) in the app's private directory. The key lives in the Android keystore, so the file is useless when copied off the device. Changing the package name changes the uid and therefore the key — a renamed build starts with an empty vault.
