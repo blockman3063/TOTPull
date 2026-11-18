@@ -11,8 +11,14 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.view.View;
+import android.widget.EditText;
+import android.widget.ImageView;
 import android.widget.ListView;
+import android.widget.RadioButton;
+import android.widget.RadioGroup;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -28,7 +34,9 @@ import org.json.JSONObject;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 import io.blockman.totpull.Capabilities;
 import io.blockman.totpull.ProbeReceiver;
@@ -83,6 +91,15 @@ public class MainActivity extends AppCompatActivity {
     private ListView _listView;
     private View _emptyView;
     private TextView _codesSubtitle;
+
+    // Live filter selection. Empty query / null dimensions mean "show everything".
+    private String _query = "";
+    private String _filterSource;   // sourcePackage, "" = hand-added, null = all
+    private String _filterType;     // TotpEntry.TYPE_*, null = all
+    private EditText _searchInput;
+    private View _searchClear;
+    private TextView _filterLabel;
+    private ImageView _filterIcon;
 
     /** 0 = codes list, 1 = info page. */
     private int _tab;
@@ -155,6 +172,8 @@ public class MainActivity extends AppCompatActivity {
         fab.setOnClickListener(v -> showAddMenu());
 
         _codesSubtitle = findViewById(R.id.codes_subtitle);
+        setUpFilters();
+
         // Module readiness survives restarts; only a probe can change it.
         _moduleReady = Capabilities.cachedModuleReady(this);
         setUpNavigation();
@@ -165,6 +184,123 @@ public class MainActivity extends AppCompatActivity {
         if (!Capabilities.isSetupDone(this)) {
             _handler.postDelayed(this::startFirstRun, 350);
         }
+    }
+
+    // ------------------------------------------------------------------ search & filter
+
+    private void setUpFilters() {
+        _searchInput = findViewById(R.id.search_input);
+        _searchClear = findViewById(R.id.search_clear);
+        _filterLabel = findViewById(R.id.filter_label);
+        _filterIcon = findViewById(R.id.filter_icon);
+
+        _searchInput.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {
+                _query = s.toString();
+                _searchClear.setVisibility(s.length() > 0 ? View.VISIBLE : View.GONE);
+                applyFilter();
+            }
+        });
+        _searchClear.setOnClickListener(v -> _searchInput.setText(""));
+        findViewById(R.id.filter_button).setOnClickListener(v -> showFilterDialog());
+    }
+
+    /** Pushes the current selection into the adapter and refreshes the count/empty state. */
+    private void applyFilter() {
+        if (_adapter != null) {
+            _adapter.setFilter(_query, _filterSource, _filterType);
+        }
+        updateSubtitle();
+        updateEmptyState();
+        updateFilterBadge();
+    }
+
+    private void updateFilterBadge() {
+        boolean active = _adapter != null && _adapter.isFiltering();
+        int color = active ? R.color.accent : R.color.text_secondary;
+        _filterIcon.setImageTintList(ColorStateList.valueOf(getResources().getColor(color)));
+        _filterLabel.setTextColor(getResources().getColor(color));
+        _filterLabel.setText(active ? R.string.filter_active : R.string.filter_title);
+    }
+
+    /** Source + type pickers built from the data actually in the vault. */
+    private void showFilterDialog() {
+        View view = getLayoutInflater().inflate(R.layout.dialog_filter, null);
+        RadioGroup sourceGroup = view.findViewById(R.id.filter_source_group);
+        RadioGroup typeGroup = view.findViewById(R.id.filter_type_group);
+
+        addRadio(sourceGroup, getString(R.string.filter_all), null, _filterSource == null);
+        Set<String> sources = new LinkedHashSet<>();
+        for (TotpEntry e : _entries) {
+            sources.add(e.sourcePackage == null ? "" : e.sourcePackage);
+        }
+        for (String pkg : sources) {
+            String label;
+            if (pkg.isEmpty()) {
+                label = getString(R.string.local_source);
+            } else {
+                String found = "";
+                for (TotpEntry e : _entries) {
+                    if (pkg.equals(e.sourcePackage == null ? "" : e.sourcePackage)
+                            && e.sourceLabel != null && !e.sourceLabel.isEmpty()) {
+                        found = e.sourceLabel;
+                        break;
+                    }
+                }
+                label = found.isEmpty() ? pkg : found;
+            }
+            addRadio(sourceGroup, label, pkg, pkg.equals(_filterSource));
+        }
+
+        addRadio(typeGroup, getString(R.string.filter_all), null, _filterType == null);
+        addRadio(typeGroup, getString(R.string.filter_type_totp), TotpEntry.TYPE_TOTP,
+                TotpEntry.TYPE_TOTP.equals(_filterType));
+        addRadio(typeGroup, getString(R.string.filter_type_hotp), TotpEntry.TYPE_HOTP,
+                TotpEntry.TYPE_HOTP.equals(_filterType));
+        addRadio(typeGroup, getString(R.string.filter_type_steam), TotpEntry.TYPE_STEAM,
+                TotpEntry.TYPE_STEAM.equals(_filterType));
+
+        sourceGroup.setOnCheckedChangeListener((group, checkedId) ->
+                _filterSource = tagOf(group, checkedId));
+        typeGroup.setOnCheckedChangeListener((group, checkedId) ->
+                _filterType = tagOf(group, checkedId));
+
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.filter_title)
+                .setView(view)
+                .setNeutralButton(R.string.filter_reset, (d, w) -> {
+                    _filterSource = null;
+                    _filterType = null;
+                    applyFilter();
+                })
+                .setPositiveButton(R.string.filter_done, (d, w) -> applyFilter())
+                .show();
+    }
+
+    /** A radio's tag is its filter value; the "all" option carries no tag. */
+    private void addRadio(RadioGroup group, String label, String value, boolean checked) {
+        RadioButton radio = new RadioButton(this);
+        radio.setText(label);
+        radio.setTag(value); // null is fine: it marks "all"
+        radio.setChecked(checked);
+        group.addView(radio);
+    }
+
+    private String tagOf(RadioGroup group, int checkedId) {
+        if (checkedId == View.NO_ID) {
+            return null;
+        }
+        View checked = group.findViewById(checkedId);
+        return checked == null ? null : (String) checked.getTag();
     }
 
     // ------------------------------------------------------------------ navigation
@@ -341,20 +477,21 @@ public class MainActivity extends AppCompatActivity {
             _vaultWarnShown = true;
             toast(getString(R.string.probe_vault_unreadable));
         }
-        if (_adapter != null) {
-            _adapter.rebuild();
-        }
-        updateEmptyState();
-        updateSubtitle();
+        applyFilter();
     }
 
-    /** "12 个条目 · 2 个来源" under the page title. */
+    /** "12 个条目 · 2 个来源" under the page title, or "显示 3 / 12 条" while filtered. */
     private void updateSubtitle() {
         if (_codesSubtitle == null) {
             return;
         }
         if (_entries.isEmpty()) {
             _codesSubtitle.setText(R.string.codes_subtitle_empty);
+            return;
+        }
+        if (_adapter != null && _adapter.isFiltering()) {
+            _codesSubtitle.setText(getString(R.string.codes_subtitle_filtered,
+                    _adapter.getVisibleCount(), _entries.size()));
             return;
         }
         java.util.HashSet<String> sources = new java.util.HashSet<>();
@@ -1048,9 +1185,16 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void updateEmptyState() {
-        boolean empty = _entries.isEmpty();
+        boolean filtering = _adapter != null && _adapter.isFiltering();
+        boolean empty = filtering
+                ? _adapter.getVisibleCount() == 0
+                : _entries.isEmpty();
         _emptyView.setVisibility(empty ? View.VISIBLE : View.GONE);
         _listView.setVisibility(empty ? View.GONE : View.VISIBLE);
+        TextView title = findViewById(R.id.empty_title);
+        TextView hint = findViewById(R.id.empty_hint);
+        title.setText(filtering ? R.string.empty_filtered_title : R.string.empty_title);
+        hint.setText(filtering ? R.string.empty_filtered_hint : R.string.empty_hint);
     }
 
     private void toast(String msg) {

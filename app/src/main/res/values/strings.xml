@@ -91,6 +91,24 @@
     <string name="nav_info">信息</string>
     <string name="codes_subtitle">%1$d 个条目 · %2$d 个来源</string>
     <string name="codes_subtitle_empty">还没有任何条目</string>
+    <string name="codes_subtitle_filtered">显示 %1$d / %2$d 条</string>
+
+    <!-- 搜索与筛选 -->
+    <string name="search_hint">搜索名称、账号或备注</string>
+    <string name="search_clear">清除搜索</string>
+    <string name="filter_title">筛选验证码</string>
+    <string name="filter_all">全部</string>
+    <string name="filter_source">来源</string>
+    <string name="filter_type">类型</string>
+    <string name="filter_reset">重置</string>
+    <string name="filter_done">完成</string>
+    <string name="filter_active">筛选中</string>
+    <string name="filter_type_totp">TOTP</string>
+    <string name="filter_type_hotp">HOTP</string>
+    <string name="filter_type_steam">Steam</string>
+    <string name="filter_type_other">其他</string>
+    <string name="empty_filtered_title">没有匹配的验证码</string>
+    <string name="empty_filtered_hint">换个关键词，或把筛选条件重置一下。</string>
 
     <!-- 信息页 -->
     <string name="info_badge">当前模式</string>

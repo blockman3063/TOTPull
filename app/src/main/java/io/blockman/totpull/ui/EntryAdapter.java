@@ -12,6 +12,7 @@ import android.widget.TextView;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 import io.blockman.totpull.R;
@@ -30,17 +31,44 @@ public class EntryAdapter extends BaseAdapter {
     private final List<TotpEntry> _entries;
     private final List<Object> _rows = new ArrayList<>();
 
+    // Filter state. null source/type means "no restriction" for that dimension.
+    private String _query = "";
+    private String _sourcePackage;
+    private String _type;
+    private int _visibleCount;
+
     public EntryAdapter(Context context, List<TotpEntry> entries) {
         _context = context;
         _entries = entries;
         rebuild();
     }
 
+    /** Applies the search/filter selection and rebuilds the grouped rows. */
+    public void setFilter(String query, String sourcePackage, String type) {
+        _query = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
+        _sourcePackage = sourcePackage;
+        _type = type;
+        rebuild();
+    }
+
+    public boolean isFiltering() {
+        return !_query.isEmpty() || _sourcePackage != null || _type != null;
+    }
+
+    /** Number of entries currently visible (headers excluded). */
+    public int getVisibleCount() {
+        return _visibleCount;
+    }
+
     public void rebuild() {
         _rows.clear();
+        _visibleCount = 0;
 
         Map<String, List<TotpEntry>> groups = new LinkedHashMap<>();
         for (TotpEntry entry : _entries) {
+            if (!matches(entry)) {
+                continue;
+            }
             String key = entry.sourcePackage == null ? "" : entry.sourcePackage;
             List<TotpEntry> bucket = groups.get(key);
             if (bucket == null) {
@@ -75,9 +103,50 @@ public class EntryAdapter extends BaseAdapter {
             }
             _rows.add(new Header(label, key, bucket.size()));
             _rows.addAll(bucket);
+            _visibleCount += bucket.size();
         }
 
         notifyDataSetChanged();
+    }
+
+    /**
+     * All three dimensions AND together. Search covers the visible text plus source and notes;
+     * source and type are exact matches chosen in the filter dialog.
+     */
+    private boolean matches(TotpEntry entry) {
+        if (_sourcePackage != null) {
+            String pkg = entry.sourcePackage == null ? "" : entry.sourcePackage;
+            if (!pkg.equals(_sourcePackage)) {
+                return false;
+            }
+        }
+        if (_type != null && !typeMatches(entry, _type)) {
+            return false;
+        }
+        if (_query.isEmpty()) {
+            return true;
+        }
+        return contains(entry.issuer) || contains(entry.name) || contains(entry.group)
+                || contains(entry.note) || contains(entry.sourceLabel)
+                || contains(entry.sourcePackage) || contains(entry.type);
+    }
+
+    private boolean contains(String value) {
+        return value != null && value.toLowerCase(Locale.ROOT).contains(_query);
+    }
+
+    private static boolean typeMatches(TotpEntry entry, String type) {
+        if (TotpEntry.TYPE_TOTP.equals(type)) {
+            return !entry.isHotp() && !entry.isSteam() && entry.isSupported();
+        }
+        if (TotpEntry.TYPE_HOTP.equals(type)) {
+            return entry.isHotp();
+        }
+        if (TotpEntry.TYPE_STEAM.equals(type)) {
+            return entry.isSteam();
+        }
+        // "other" - unsupported types such as Yandex / MOTP.
+        return !entry.isSupported();
     }
 
     public List<TotpEntry> getEntries() {
