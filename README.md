@@ -41,7 +41,13 @@ The broadcast path is complete on its own; root only avoids a round trip. A `su`
 
 ## Browsing codes
 
-Entries are grouped by source app. Tap a group header to fold or unfold it (the chevron points down when open, right when folded); long-press the header to delete the whole group.
+Entries are grouped by source app. Tap a group header to fold or unfold it (the chevron points down when open, right when folded). Long-press a header for the full group menu:
+
+- **Fold / unfold** — same as tapping the header.
+- **Re-import from source** — probes that source app again; existing entries are de-duplicated and only new accounts are added. Only offered for sources TOTPull knows how to extract from.
+- **Export group** — shares every entry as `otpauth://` lines that other authenticator apps can import.
+- **Rename group** — changes the display label for all rows in the group (the source package stays the same).
+- **Delete group** — removes every entry in the group after confirmation.
 
 The search box matches issuer, name, group, notes and source. The filter dialog offers source and type pickers built from the entries actually in the vault; search and both dimensions AND together. Filtering happens in the list adapter only — the vault is never touched. The subtitle switches to `显示 X / Y 条` while a filter is active.
 

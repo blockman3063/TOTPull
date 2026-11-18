@@ -653,9 +653,103 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void showGroupMenu(EntryAdapter.Header header) {
-        String[] items = new String[]{getString(R.string.group_menu_delete)};
+        String pkg = header.packageName == null ? "" : header.packageName;
+        final ExtractTarget target = findTarget(pkg);
+        final boolean syncable = target != null;
+
+        List<String> items = new ArrayList<>();
+        items.add(getString(header.collapsed
+                ? R.string.group_menu_unfold : R.string.group_menu_fold));
+        if (syncable) {
+            items.add(getString(R.string.group_menu_sync));
+        }
+        items.add(getString(R.string.group_menu_export));
+        items.add(getString(R.string.group_menu_rename));
+        items.add(getString(R.string.group_menu_delete));
+
         new MaterialAlertDialogBuilder(this)
-                .setItems(items, (d, which) -> confirmDeleteGroup(header))
+                .setTitle(header.title)
+                .setItems(items.toArray(new String[0]), (d, which) -> {
+                    int i = which;
+                    if (i == 0) {
+                        _adapter.toggleGroup(pkg);
+                    } else if (syncable && i == 1) {
+                        startProbe(target);
+                    } else {
+                        // The remaining actions shift by one when sync is absent.
+                        int action = syncable ? i : i + 1;
+                        // 2 = export, 3 = rename, 4 = delete
+                        if (action == 2) {
+                            exportGroup(pkg, header.title);
+                        } else if (action == 3) {
+                            showRenameGroup(pkg, header.title);
+                        } else {
+                            confirmDeleteGroup(header);
+                        }
+                    }
+                })
+                .show();
+    }
+
+    private ExtractTarget findTarget(String packageName) {
+        for (ExtractTarget target : EXTRACT_TARGETS) {
+            if (target.packageName.equals(packageName)) {
+                return target;
+            }
+        }
+        return null;
+    }
+
+    /** Shares the group's entries as otpauth lines that other authenticator apps can import. */
+    private void exportGroup(String pkg, String title) {
+        StringBuilder text = new StringBuilder();
+        for (TotpEntry e : _entries) {
+            String rowKey = e.sourcePackage == null ? "" : e.sourcePackage;
+            if (!rowKey.equals(pkg)) {
+                continue;
+            }
+            text.append(e.toOtpauthUri()).append('\n');
+        }
+        if (text.length() == 0) {
+            toast(getString(R.string.group_export_empty));
+            return;
+        }
+        Intent share = new Intent(Intent.ACTION_SEND);
+        share.setType("text/plain");
+        share.putExtra(Intent.EXTRA_SUBJECT, getString(R.string.group_export_title, title));
+        share.putExtra(Intent.EXTRA_TEXT, text.toString().trim());
+        startActivity(Intent.createChooser(share,
+                getString(R.string.group_export_title, title)));
+    }
+
+    /** Renames the label shown for a whole group by stamping sourceLabel on every row. */
+    private void showRenameGroup(String pkg, String currentTitle) {
+        View view = getLayoutInflater().inflate(R.layout.dialog_group_name, null);
+        EditText input = view.findViewById(R.id.group_name_input);
+        input.setText(currentTitle);
+        input.setSelection(input.getText().length());
+
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.group_rename_title)
+                .setView(view)
+                .setPositiveButton(R.string.save, (d, w) -> {
+                    String name = input.getText().toString().trim();
+                    if (name.isEmpty()) {
+                        toast(getString(R.string.group_rename_blank));
+                        return;
+                    }
+                    List<TotpEntry> current = _store.load();
+                    for (TotpEntry e : current) {
+                        String rowKey = e.sourcePackage == null ? "" : e.sourcePackage;
+                        if (rowKey.equals(pkg)) {
+                            e.sourceLabel = name;
+                        }
+                    }
+                    _store.save(current);
+                    reload();
+                    toast(getString(R.string.group_renamed, name));
+                })
+                .setNegativeButton(R.string.cancel, null)
                 .show();
     }
 

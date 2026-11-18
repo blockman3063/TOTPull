@@ -29,6 +29,17 @@
     <string name="delete_group_message">确定删除「%1$s」的全部 %2$d 条？</string>
     <string name="delete_group_done">已删除 %1$d 条</string>
     <string name="group_menu_delete">删除整组</string>
+    <string name="group_menu_fold">折叠该组</string>
+    <string name="group_menu_unfold">展开该组</string>
+    <string name="group_menu_sync">从来源重新导入</string>
+    <string name="group_menu_export">导出该组</string>
+    <string name="group_menu_rename">重命名组别</string>
+    <string name="group_rename_title">重命名组别</string>
+    <string name="group_rename_hint">组别名称</string>
+    <string name="group_rename_blank">名称不能为空</string>
+    <string name="group_renamed">组别已重命名为「%1$s」</string>
+    <string name="group_export_title">导出「%1$s」</string>
+    <string name="group_export_empty">这一组没有可导出的条目</string>
 
     <string name="edit_title">编辑条目</string>
     <string name="edit_title_new">新建条目</string>
