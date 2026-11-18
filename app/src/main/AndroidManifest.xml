@@ -73,6 +73,11 @@
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
 
+        <activity
+            android:name=".ui.EditGroupActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+
         <!-- Manifest-declared so the answer still arrives while this app sits in the background
              and the system has frozen its process. A runtime receiver is not seen as live in that
              state, so the broadcast would be dropped. -->

@@ -23,7 +23,6 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.annotation.Nullable;
-import androidx.appcompat.app.AlertDialog;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import androidx.appcompat.app.AppCompatActivity;
 
@@ -54,6 +53,8 @@ public class MainActivity extends AppCompatActivity {
     private static final int REQ_OPEN_FILE = 1001;
     /** Asked right before we leave for the source app, so the answer can call us back. */
     private static final int REQ_NOTIFY = 1002;
+    /** EditGroupActivity answered: re-import that source group. */
+    private static final int REQ_EDIT_GROUP = 1003;
 
     /** Broadcast exchanged with the Xposed module running inside the source app. */
     static final String ACTION_PROBE = "io.blockman.totpull.action.PROBE";
@@ -69,13 +70,13 @@ public class MainActivity extends AppCompatActivity {
      * Apps we know how to pull codes out of. Each entry needs a matching extractor on the module
      * side; the module answers with a ready-made otpauth URI so this side stays format-agnostic.
      */
-    private static final ExtractTarget[] EXTRACT_TARGETS = {
+    static final ExtractTarget[] EXTRACT_TARGETS = {
             new ExtractTarget("com.riotgames.mobile.leagueconnect", "Riot Mobile"),
             new ExtractTarget("com.valvesoftware.android.steam.community", "Steam"),
             new ExtractTarget("com.google.android.apps.authenticator2", "谷歌验证器"),
     };
 
-    private static final class ExtractTarget {
+    static final class ExtractTarget {
         final String packageName;
         final String label;
 
@@ -162,11 +163,15 @@ public class MainActivity extends AppCompatActivity {
         _listView.setOnItemLongClickListener((parent, view, position, id) -> {
             Object row = _adapter.getItem(position);
             if (row instanceof TotpEntry) {
-                showEntryMenu((TotpEntry) row);
+                // Straight into the editor - no intermediate menu. Delete lives in the editor.
+                openEditor(((TotpEntry) row).id);
                 return true;
             }
             if (row instanceof EntryAdapter.Header) {
-                showGroupMenu((EntryAdapter.Header) row);
+                Intent intent = new Intent(this, EditGroupActivity.class);
+                String pkg = ((EntryAdapter.Header) row).packageName;
+                intent.putExtra(EditGroupActivity.EXTRA_PACKAGE, pkg == null ? "" : pkg);
+                startActivityForResult(intent, REQ_EDIT_GROUP);
                 return true;
             }
             return false;
@@ -639,247 +644,14 @@ public class MainActivity extends AppCompatActivity {
         toast(getString(R.string.copied, TotpGenerator.format(code, entry.isSteam())));
     }
 
-    private void showEntryMenu(TotpEntry entry) {
-        String[] items = new String[]{getString(R.string.edit_title), getString(R.string.delete)};
-        new MaterialAlertDialogBuilder(this)
-                .setItems(items, (d, which) -> {
-                    if (which == 0) {
-                        openEditor(entry.id);
-                    } else {
-                        confirmDelete(entry);
-                    }
-                })
-                .show();
-    }
-
-    private static final int GROUP_ACTION_SETTINGS = 0;
-    private static final int GROUP_ACTION_TOGGLE = 1;
-    private static final int GROUP_ACTION_SYNC = 2;
-    private static final int GROUP_ACTION_EXPORT = 3;
-    private static final int GROUP_ACTION_RENAME = 4;
-    private static final int GROUP_ACTION_DELETE = 5;
-
-    private void showGroupMenu(EntryAdapter.Header header) {
-        String pkg = header.packageName == null ? "" : header.packageName;
-        final ExtractTarget target = findTarget(pkg);
-        final boolean syncable = target != null;
-
-        List<String> items = new ArrayList<>();
-        List<Integer> actions = new ArrayList<>();
-        items.add(getString(R.string.group_settings_title));
-        actions.add(GROUP_ACTION_SETTINGS);
-        items.add(getString(header.collapsed
-                ? R.string.group_menu_unfold : R.string.group_menu_fold));
-        actions.add(GROUP_ACTION_TOGGLE);
-        if (syncable) {
-            items.add(getString(R.string.group_menu_sync));
-            actions.add(GROUP_ACTION_SYNC);
-        }
-        items.add(getString(R.string.group_menu_export));
-        actions.add(GROUP_ACTION_EXPORT);
-        items.add(getString(R.string.group_menu_rename));
-        actions.add(GROUP_ACTION_RENAME);
-        items.add(getString(R.string.group_menu_delete));
-        actions.add(GROUP_ACTION_DELETE);
-
-        new MaterialAlertDialogBuilder(this)
-                .setTitle(header.title)
-                .setItems(items.toArray(new String[0]), (d, which) -> {
-                    ExtractTarget syncTarget = syncable ? target : null;
-                    onGroupAction(header, actions.get(which), syncTarget);
-                })
-                .show();
-    }
-
-    private void onGroupAction(EntryAdapter.Header header, int action, ExtractTarget target) {
-        String pkg = header.packageName == null ? "" : header.packageName;
-        switch (action) {
-            case GROUP_ACTION_SETTINGS:
-                showGroupSettings(header);
-                break;
-            case GROUP_ACTION_TOGGLE:
-                _adapter.toggleGroup(pkg);
-                break;
-            case GROUP_ACTION_SYNC:
-                startProbe(target);
-                break;
-            case GROUP_ACTION_EXPORT:
-                exportGroup(pkg, header.title);
-                break;
-            case GROUP_ACTION_RENAME:
-                showRenameGroup(pkg, header.title);
-                break;
-            default:
-                confirmDeleteGroup(header);
-                break;
-        }
-    }
-
-    /** Read-only facts about the group plus the destructive/label actions in one place. */
-    private void showGroupSettings(EntryAdapter.Header header) {
-        String pkg = header.packageName == null ? "" : header.packageName;
-
-        int count = 0;
-        java.util.LinkedHashMap<String, Integer> typeCounts = new java.util.LinkedHashMap<>();
-        for (TotpEntry e : _entries) {
-            String rowKey = e.sourcePackage == null ? "" : e.sourcePackage;
-            if (!rowKey.equals(pkg)) {
-                continue;
-            }
-            count++;
-            String type = e.isSteam() ? "Steam"
-                    : e.isSupported() ? e.type : getString(R.string.settings_type_other);
-            Integer seen = typeCounts.get(type);
-            typeCounts.put(type, seen == null ? 1 : seen + 1);
-        }
-        StringBuilder types = new StringBuilder();
-        for (java.util.Map.Entry<String, Integer> row : typeCounts.entrySet()) {
-            if (types.length() > 0) {
-                types.append("  ·  ");
-            }
-            types.append(row.getKey()).append(" × ").append(row.getValue());
-        }
-
-        ExtractTarget target = findTarget(pkg);
-        String sourceText;
-        if (target != null) {
-            sourceText = target.label; // The app's real name, even if the group was renamed.
-        } else if (pkg.isEmpty()) {
-            sourceText = getString(R.string.local_source);
-        } else {
-            sourceText = getString(R.string.settings_unknown_source);
-        }
-
-        View view = getLayoutInflater().inflate(R.layout.dialog_group_settings, null);
-        ((TextView) view.findViewById(R.id.settings_name)).setText(header.title);
-        ((TextView) view.findViewById(R.id.settings_source)).setText(sourceText);
-        ((TextView) view.findViewById(R.id.settings_package)).setText(pkg.isEmpty()
-                ? getString(R.string.settings_no_package) : pkg);
-        ((TextView) view.findViewById(R.id.settings_count)).setText(
-                getString(R.string.entry_count, count));
-        ((TextView) view.findViewById(R.id.settings_types)).setText(types);
-
-        AlertDialog dialog = new MaterialAlertDialogBuilder(this)
-                .setTitle(R.string.group_settings_title)
-                .setView(view)
-                .setPositiveButton(R.string.close, null)
-                .show();
-        view.findViewById(R.id.settings_rename).setOnClickListener(v -> {
-            dialog.dismiss();
-            showRenameGroup(pkg, header.title);
-        });
-        view.findViewById(R.id.settings_export).setOnClickListener(v -> {
-            dialog.dismiss();
-            exportGroup(pkg, header.title);
-        });
-        view.findViewById(R.id.settings_delete).setOnClickListener(v -> {
-            dialog.dismiss();
-            confirmDeleteGroup(header);
-        });
-    }
-
-    private ExtractTarget findTarget(String packageName) {
+    /** Looks up the known extract sources; shared with EditGroupActivity. */
+    static ExtractTarget findTarget(String packageName) {
         for (ExtractTarget target : EXTRACT_TARGETS) {
             if (target.packageName.equals(packageName)) {
                 return target;
             }
         }
         return null;
-    }
-
-    /** Shares the group's entries as otpauth lines that other authenticator apps can import. */
-    private void exportGroup(String pkg, String title) {
-        StringBuilder text = new StringBuilder();
-        for (TotpEntry e : _entries) {
-            String rowKey = e.sourcePackage == null ? "" : e.sourcePackage;
-            if (!rowKey.equals(pkg)) {
-                continue;
-            }
-            text.append(e.toOtpauthUri()).append('\n');
-        }
-        if (text.length() == 0) {
-            toast(getString(R.string.group_export_empty));
-            return;
-        }
-        Intent share = new Intent(Intent.ACTION_SEND);
-        share.setType("text/plain");
-        share.putExtra(Intent.EXTRA_SUBJECT, getString(R.string.group_export_title, title));
-        share.putExtra(Intent.EXTRA_TEXT, text.toString().trim());
-        startActivity(Intent.createChooser(share,
-                getString(R.string.group_export_title, title)));
-    }
-
-    /** Renames the label shown for a whole group by stamping sourceLabel on every row. */
-    private void showRenameGroup(String pkg, String currentTitle) {
-        View view = getLayoutInflater().inflate(R.layout.dialog_group_name, null);
-        EditText input = view.findViewById(R.id.group_name_input);
-        input.setText(currentTitle);
-        input.setSelection(input.getText().length());
-
-        new MaterialAlertDialogBuilder(this)
-                .setTitle(R.string.group_rename_title)
-                .setView(view)
-                .setPositiveButton(R.string.save, (d, w) -> {
-                    String name = input.getText().toString().trim();
-                    if (name.isEmpty()) {
-                        toast(getString(R.string.group_rename_blank));
-                        return;
-                    }
-                    List<TotpEntry> current = _store.load();
-                    for (TotpEntry e : current) {
-                        String rowKey = e.sourcePackage == null ? "" : e.sourcePackage;
-                        if (rowKey.equals(pkg)) {
-                            e.sourceLabel = name;
-                        }
-                    }
-                    _store.save(current);
-                    reload();
-                    toast(getString(R.string.group_renamed, name));
-                })
-                .setNegativeButton(R.string.cancel, null)
-                .show();
-    }
-
-    private void confirmDeleteGroup(EntryAdapter.Header header) {
-        new MaterialAlertDialogBuilder(this)
-                .setTitle(R.string.delete_group_title)
-                .setMessage(getString(R.string.delete_group_message, header.title, header.count))
-                .setPositiveButton(R.string.delete, (d, w) -> {
-                    String key = header.packageName == null ? "" : header.packageName;
-                    List<TotpEntry> current = _store.load();
-                    int removed = 0;
-                    for (int i = current.size() - 1; i >= 0; i--) {
-                        String rowKey = current.get(i).sourcePackage == null
-                                ? "" : current.get(i).sourcePackage;
-                        if (rowKey.equals(key)) {
-                            current.remove(i);
-                            removed++;
-                        }
-                    }
-                    _store.save(current);
-                    reload();
-                    toast(getString(R.string.delete_group_done, removed));
-                })
-                .setNegativeButton(R.string.cancel, null)
-                .show();
-    }
-
-    private void confirmDelete(TotpEntry entry) {
-        new MaterialAlertDialogBuilder(this)
-                .setTitle(R.string.delete_title)
-                .setMessage(getString(R.string.delete_message, entry.displayName()))
-                .setPositiveButton(R.string.delete, (d, w) -> {
-                    List<TotpEntry> current = _store.load();
-                    for (int i = current.size() - 1; i >= 0; i--) {
-                        if (current.get(i).id.equals(entry.id)) {
-                            current.remove(i);
-                        }
-                    }
-                    _store.save(current);
-                    reload();
-                })
-                .setNegativeButton(R.string.cancel, null)
-                .show();
     }
 
     private void showAddMenu() {
@@ -1291,6 +1063,16 @@ public class MainActivity extends AppCompatActivity {
         if (requestCode == REQ_OPEN_FILE && resultCode == RESULT_OK
                 && data != null && data.getData() != null) {
             importFromUri(data.getData());
+            return;
+        }
+        if (requestCode == REQ_EDIT_GROUP && resultCode == RESULT_OK
+                && data != null) {
+            String pkg = data.getStringExtra(EditGroupActivity.EXTRA_PACKAGE);
+            ExtractTarget target = pkg == null ? null : findTarget(pkg);
+            if (target != null) {
+                // Re-import from the source app; the probe flow owns the dialogs from here.
+                startProbe(target);
+            }
         }
     }
 
