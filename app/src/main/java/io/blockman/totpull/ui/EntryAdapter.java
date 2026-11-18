@@ -5,15 +5,18 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.BaseAdapter;
+import android.widget.ImageView;
 import android.widget.ListView;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 import io.blockman.totpull.R;
 import io.blockman.totpull.TotpEntry;
@@ -37,6 +40,9 @@ public class EntryAdapter extends BaseAdapter {
     private String _type;
     private int _visibleCount;
 
+    // Group keys (sourcePackage) the user has folded. Persistent across rebuilds/filters.
+    private final Set<String> _collapsed = new HashSet<>();
+
     public EntryAdapter(Context context, List<TotpEntry> entries) {
         _context = context;
         _entries = entries;
@@ -53,6 +59,19 @@ public class EntryAdapter extends BaseAdapter {
 
     public boolean isFiltering() {
         return !_query.isEmpty() || _sourcePackage != null || _type != null;
+    }
+
+    /** Flips a group between expanded and folded. The key is the sourcePackage. */
+    public void toggleGroup(String key) {
+        if (key == null) {
+            key = "";
+        }
+        if (_collapsed.contains(key)) {
+            _collapsed.remove(key);
+        } else {
+            _collapsed.add(key);
+        }
+        rebuild();
     }
 
     /** Number of entries currently visible (headers excluded). */
@@ -101,8 +120,11 @@ public class EntryAdapter extends BaseAdapter {
             } else {
                 label = bucket.get(0).displaySource();
             }
-            _rows.add(new Header(label, key, bucket.size()));
-            _rows.addAll(bucket);
+            boolean collapsed = _collapsed.contains(key);
+            _rows.add(new Header(label, key, bucket.size(), collapsed));
+            if (!collapsed) {
+                _rows.addAll(bucket);
+            }
             _visibleCount += bucket.size();
         }
 
@@ -180,8 +202,7 @@ public class EntryAdapter extends BaseAdapter {
 
     @Override
     public boolean isEnabled(int position) {
-        // Headers stay enabled so they can be long-pressed to delete the whole group;
-        // MainActivity simply ignores taps on them.
+        // Headers stay enabled: taps fold/unfold, long-press deletes the whole group.
         return true;
     }
 
@@ -201,11 +222,14 @@ public class EntryAdapter extends BaseAdapter {
         }
         TextView name = view.findViewById(R.id.source_name);
         TextView count = view.findViewById(R.id.source_count);
+        ImageView arrow = view.findViewById(R.id.group_arrow);
         name.setText(header.title);
         String subtitle = header.packageName.isEmpty()
                 ? _context.getString(R.string.entry_count, header.count)
                 : header.packageName + "  ·  " + _context.getString(R.string.entry_count, header.count);
         count.setText(subtitle);
+        // Point down when expanded, right when folded.
+        arrow.setRotation(header.collapsed ? 0f : 90f);
         return view;
     }
 
@@ -293,16 +317,18 @@ public class EntryAdapter extends BaseAdapter {
         ProgressBar progress;
     }
 
-    /** One source-app bucket. Long-pressing it deletes the whole group. */
+    /** One source-app bucket. Tapping folds it, long-pressing deletes the whole group. */
     public static class Header {
         public final String title;
         public final String packageName;
         public final int count;
+        public final boolean collapsed;
 
-        Header(String title, String packageName, int count) {
+        Header(String title, String packageName, int count, boolean collapsed) {
             this.title = title;
             this.packageName = packageName;
             this.count = count;
+            this.collapsed = collapsed;
         }
     }
 }

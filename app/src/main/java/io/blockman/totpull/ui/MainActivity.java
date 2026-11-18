@@ -152,6 +152,8 @@ public class MainActivity extends AppCompatActivity {
             Object row = _adapter.getItem(position);
             if (row instanceof TotpEntry) {
                 onEntryClicked((TotpEntry) row);
+            } else if (row instanceof EntryAdapter.Header) {
+                _adapter.toggleGroup(((EntryAdapter.Header) row).packageName);
             }
         });
 

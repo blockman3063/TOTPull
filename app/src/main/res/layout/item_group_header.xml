@@ -27,4 +27,13 @@
         android:maxLines="1"
         android:textColor="@color/text_tertiary"
         android:textSize="11sp" />
+
+    <ImageView
+        android:id="@+id/group_arrow"
+        android:layout_width="20dp"
+        android:layout_height="20dp"
+        android:layout_marginStart="4dp"
+        android:contentDescription="@null"
+        android:src="@drawable/ic_chevron_right"
+        android:tint="@color/text_tertiary" />
 </LinearLayout>
