@@ -1,0 +1,16 @@
+# Gradle
+.gradle/
+build/
+
+# Local SDK path
+local.properties
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.DS_Store
+
+# Development samples, device dumps and screenshots.
+# Contains a pulled LSPosed config database and screenshots of a real account.
+test/

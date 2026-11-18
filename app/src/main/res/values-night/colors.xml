@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      深色必须把 values/colors.xml 里的每个颜色都覆盖一遍：缺失的项不会“自动变暗”，
+      而是回落到浅色值（白底卡片、浅色状态卡），在深色下会直接糊脸。
+    -->
+    <color name="bg">#0F0F12</color>
+    <color name="card">#1B1B1F</color>
+    <color name="card_inset">#242429</color>
+    <color name="text_primary">#F3F3F7</color>
+    <color name="text_secondary">#9C9CA4</color>
+    <color name="text_tertiary">#6C6C75</color>
+    <color name="accent">#6A9BFF</color>
+    <color name="divider">#2A2A31</color>
+    <color name="on_accent">#0B1220</color>
+    <color name="danger">#FF7B72</color>
+
+    <color name="status_ok_bg">#10301C</color>
+    <color name="status_ok_bg2">#0B2415</color>
+    <color name="status_ok_fg">#4FD98C</color>
+    <color name="status_ok_text">#8FE8B4</color>
+
+    <color name="status_warn_bg">#33260D</color>
+    <color name="status_warn_bg2">#281D09</color>
+    <color name="status_warn_fg">#E8B04B</color>
+    <color name="status_warn_text">#F5CE8A</color>
+
+    <color name="status_bad_bg">#341614</color>
+    <color name="status_bad_bg2">#281110</color>
+    <color name="status_bad_fg">#FF7B72</color>
+    <color name="status_bad_text">#FFB0A9</color>
+
+    <color name="nav_bg">#17171B</color>
+    <color name="nav_item_active">#F3F3F7</color>
+    <color name="nav_item_inactive">#6C6C75</color>
+    <color name="nav_pill">#2A2A31</color>
+
+    <color name="switch_thumb_off">#4C4C55</color>
+    <color name="switch_track_on">#2E4B7D</color>
+    <color name="switch_track_off">#33333B</color>
+</resources>
