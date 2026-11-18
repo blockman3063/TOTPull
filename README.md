@@ -43,6 +43,7 @@ The broadcast path is complete on its own; root only avoids a round trip. A `su`
 
 Entries are grouped by source app. Tap a group header to fold or unfold it (the chevron points down when open, right when folded). Long-press a header for the full group menu:
 
+- **Group settings** — a panel with the group's facts (display name, source app, package name, entry count, type breakdown) plus rename / export / delete actions.
 - **Fold / unfold** — same as tapping the header.
 - **Re-import from source** — probes that source app again; existing entries are de-duplicated and only new accounts are added. Only offered for sources TOTPull knows how to extract from.
 - **Export group** — shares every entry as `otpauth://` lines that other authenticator apps can import.

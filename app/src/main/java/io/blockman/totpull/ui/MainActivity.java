@@ -652,43 +652,130 @@ public class MainActivity extends AppCompatActivity {
                 .show();
     }
 
+    private static final int GROUP_ACTION_SETTINGS = 0;
+    private static final int GROUP_ACTION_TOGGLE = 1;
+    private static final int GROUP_ACTION_SYNC = 2;
+    private static final int GROUP_ACTION_EXPORT = 3;
+    private static final int GROUP_ACTION_RENAME = 4;
+    private static final int GROUP_ACTION_DELETE = 5;
+
     private void showGroupMenu(EntryAdapter.Header header) {
         String pkg = header.packageName == null ? "" : header.packageName;
         final ExtractTarget target = findTarget(pkg);
         final boolean syncable = target != null;
 
         List<String> items = new ArrayList<>();
+        List<Integer> actions = new ArrayList<>();
+        items.add(getString(R.string.group_settings_title));
+        actions.add(GROUP_ACTION_SETTINGS);
         items.add(getString(header.collapsed
                 ? R.string.group_menu_unfold : R.string.group_menu_fold));
+        actions.add(GROUP_ACTION_TOGGLE);
         if (syncable) {
             items.add(getString(R.string.group_menu_sync));
+            actions.add(GROUP_ACTION_SYNC);
         }
         items.add(getString(R.string.group_menu_export));
+        actions.add(GROUP_ACTION_EXPORT);
         items.add(getString(R.string.group_menu_rename));
+        actions.add(GROUP_ACTION_RENAME);
         items.add(getString(R.string.group_menu_delete));
+        actions.add(GROUP_ACTION_DELETE);
 
         new MaterialAlertDialogBuilder(this)
                 .setTitle(header.title)
                 .setItems(items.toArray(new String[0]), (d, which) -> {
-                    int i = which;
-                    if (i == 0) {
-                        _adapter.toggleGroup(pkg);
-                    } else if (syncable && i == 1) {
-                        startProbe(target);
-                    } else {
-                        // The remaining actions shift by one when sync is absent.
-                        int action = syncable ? i : i + 1;
-                        // 2 = export, 3 = rename, 4 = delete
-                        if (action == 2) {
-                            exportGroup(pkg, header.title);
-                        } else if (action == 3) {
-                            showRenameGroup(pkg, header.title);
-                        } else {
-                            confirmDeleteGroup(header);
-                        }
-                    }
+                    ExtractTarget syncTarget = syncable ? target : null;
+                    onGroupAction(header, actions.get(which), syncTarget);
                 })
                 .show();
+    }
+
+    private void onGroupAction(EntryAdapter.Header header, int action, ExtractTarget target) {
+        String pkg = header.packageName == null ? "" : header.packageName;
+        switch (action) {
+            case GROUP_ACTION_SETTINGS:
+                showGroupSettings(header);
+                break;
+            case GROUP_ACTION_TOGGLE:
+                _adapter.toggleGroup(pkg);
+                break;
+            case GROUP_ACTION_SYNC:
+                startProbe(target);
+                break;
+            case GROUP_ACTION_EXPORT:
+                exportGroup(pkg, header.title);
+                break;
+            case GROUP_ACTION_RENAME:
+                showRenameGroup(pkg, header.title);
+                break;
+            default:
+                confirmDeleteGroup(header);
+                break;
+        }
+    }
+
+    /** Read-only facts about the group plus the destructive/label actions in one place. */
+    private void showGroupSettings(EntryAdapter.Header header) {
+        String pkg = header.packageName == null ? "" : header.packageName;
+
+        int count = 0;
+        java.util.LinkedHashMap<String, Integer> typeCounts = new java.util.LinkedHashMap<>();
+        for (TotpEntry e : _entries) {
+            String rowKey = e.sourcePackage == null ? "" : e.sourcePackage;
+            if (!rowKey.equals(pkg)) {
+                continue;
+            }
+            count++;
+            String type = e.isSteam() ? "Steam"
+                    : e.isSupported() ? e.type : getString(R.string.settings_type_other);
+            Integer seen = typeCounts.get(type);
+            typeCounts.put(type, seen == null ? 1 : seen + 1);
+        }
+        StringBuilder types = new StringBuilder();
+        for (java.util.Map.Entry<String, Integer> row : typeCounts.entrySet()) {
+            if (types.length() > 0) {
+                types.append("  ·  ");
+            }
+            types.append(row.getKey()).append(" × ").append(row.getValue());
+        }
+
+        ExtractTarget target = findTarget(pkg);
+        String sourceText;
+        if (target != null) {
+            sourceText = target.label; // The app's real name, even if the group was renamed.
+        } else if (pkg.isEmpty()) {
+            sourceText = getString(R.string.local_source);
+        } else {
+            sourceText = getString(R.string.settings_unknown_source);
+        }
+
+        View view = getLayoutInflater().inflate(R.layout.dialog_group_settings, null);
+        ((TextView) view.findViewById(R.id.settings_name)).setText(header.title);
+        ((TextView) view.findViewById(R.id.settings_source)).setText(sourceText);
+        ((TextView) view.findViewById(R.id.settings_package)).setText(pkg.isEmpty()
+                ? getString(R.string.settings_no_package) : pkg);
+        ((TextView) view.findViewById(R.id.settings_count)).setText(
+                getString(R.string.entry_count, count));
+        ((TextView) view.findViewById(R.id.settings_types)).setText(types);
+
+        AlertDialog dialog = new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.group_settings_title)
+                .setView(view)
+                .setPositiveButton(R.string.close, null)
+                .show();
+        view.findViewById(R.id.settings_rename).setOnClickListener(v -> {
+            dialog.dismiss();
+            showRenameGroup(pkg, header.title);
+        });
+        view.findViewById(R.id.settings_export).setOnClickListener(v -> {
+            dialog.dismiss();
+            exportGroup(pkg, header.title);
+        });
+        view.findViewById(R.id.settings_delete).setOnClickListener(v -> {
+            dialog.dismiss();
+            confirmDeleteGroup(header);
+        });
     }
 
     private ExtractTarget findTarget(String packageName) {
