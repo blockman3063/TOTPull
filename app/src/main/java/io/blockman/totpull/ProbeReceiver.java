@@ -35,6 +35,13 @@ public class ProbeReceiver extends BroadcastReceiver {
     private static final String TAG = "ProbeReceiver";
 
     public static final String ACTION_RESULT = "io.blockman.totpull.action.RESULT";
+    /** Sent by the module the moment it can answer, because we cannot reliably ask it ourselves. */
+    public static final String ACTION_READY = "io.blockman.totpull.action.READY";
+    /** Sent to the module to ask for the seed. */
+    public static final String ACTION_PROBE = "io.blockman.totpull.action.PROBE";
+
+    /** How long an opened round may still react to the module waking up. */
+    private static final long ROUND_TTL_MS = 120_000L;
 
     private static final String PREFS = "probe_state";
     /** JSON blob describing the last completed round; read by the UI on resume. */
@@ -54,20 +61,20 @@ public class ProbeReceiver extends BroadcastReceiver {
 
     @Override
     public void onReceive(Context context, Intent intent) {
-        if (intent == null || !ACTION_RESULT.equals(intent.getAction())) {
+        if (intent == null) {
+            return;
+        }
+        if (ACTION_READY.equals(intent.getAction())) {
+            onModuleReady(context, intent);
+            return;
+        }
+        if (!ACTION_RESULT.equals(intent.getAction())) {
             return;
         }
         Log.i(TAG, "answer received, ok=" + intent.getBooleanExtra("ok", false)
                 + " from=" + intent.getStringExtra("source_package"));
         String claimed = intent.getStringExtra("source_package");
-        boolean trusted = false;
-        for (String source : SOURCES) {
-            if (source.equals(claimed)) {
-                trusted = true;
-                break;
-            }
-        }
-        if (!trusted) {
+        if (!isSupported(claimed)) {
             Log.w(TAG, "ignored answer claiming source " + claimed);
             return;
         }
@@ -107,6 +114,14 @@ public class ProbeReceiver extends BroadcastReceiver {
         try {
             TotpStore store = new TotpStore(context);
             List<TotpEntry> all = store.load();
+            if (store.readFailed()) {
+                // Never write over something we could not read: the import would look like it
+                // worked and every existing entry would be gone.
+                Log.w(TAG, "vault unreadable, leaving it alone");
+                writeReport(context, false, null, null,
+                        context.getString(R.string.probe_vault_unreadable), false);
+                return;
+            }
             duplicate = false;
             for (TotpEntry existing : all) {
                 if (existing.key().equals(entry.key())) {
@@ -116,7 +131,11 @@ public class ProbeReceiver extends BroadcastReceiver {
             }
             if (!duplicate) {
                 all.add(entry);
-                store.save(all);
+                if (!store.save(all)) {
+                    writeReport(context, false, null, null,
+                            context.getString(R.string.probe_save_failed), false);
+                    return;
+                }
             }
         } catch (Throwable t) {
             Log.w(TAG, "save failed", t);
@@ -130,6 +149,45 @@ public class ProbeReceiver extends BroadcastReceiver {
         writeReport(context, true, entry.name, entry.issuer, null, duplicate);
 
         notifyAndReturn(context);
+    }
+
+    /**
+     * The module has just come up inside the source app.
+     *
+     * <p>This is the reliable half of the handshake. Our side scheduled retries, but OEM power
+     * management freezes this process a couple of seconds after it loses the foreground and those
+     * retries never run — so the module speaks first instead. Its broadcast wakes us here, where
+     * we are running again and can look at our own state.
+     *
+     * <p>Answers only while an import is actually open. Otherwise merely opening the source app
+     * would pull the user into the vault.
+     */
+    private void onModuleReady(Context context, Intent intent) {
+        String claimed = intent.getStringExtra("source_package");
+        if (!isSupported(claimed)) {
+            return;
+        }
+        long since = pendingSince(context);
+        if (since <= 0 || System.currentTimeMillis() - since > ROUND_TTL_MS) {
+            return;
+        }
+        try {
+            Intent probe = new Intent(ACTION_PROBE);
+            probe.setPackage(claimed);
+            context.sendBroadcast(probe);
+            Log.i(TAG, "module is up in " + claimed + ", asked for the seed");
+        } catch (Throwable t) {
+            Log.w(TAG, "probe failed", t);
+        }
+    }
+
+    private static boolean isSupported(String claimed) {
+        for (String source : SOURCES) {
+            if (source.equals(claimed)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // ------------------------------------------------------------------ state

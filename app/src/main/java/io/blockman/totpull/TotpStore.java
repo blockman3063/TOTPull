@@ -34,12 +34,21 @@ public class TotpStore {
 
     private final File _file;
 
+    /**
+     * Set when the file exists but could not be read. Kept as state rather than an exception
+     * because the alternative — handing callers an empty list — is indistinguishable from "no
+     * vault yet", and every caller here then writes its own list straight back, replacing data it
+     * merely failed to decrypt.
+     */
+    private boolean _readFailed;
+
     public TotpStore(Context context) {
         _file = new File(context.getFilesDir(), FILE_NAME);
     }
 
     public synchronized java.util.List<TotpEntry> load() {
         java.util.List<TotpEntry> result = new java.util.ArrayList<>();
+        _readFailed = false;
         if (!_file.exists()) {
             return result;
         }
@@ -52,11 +61,23 @@ public class TotpStore {
             }
         } catch (Exception e) {
             Log.e(TAG, "failed to load vault", e);
+            result.clear();
+            _readFailed = true;
         }
         return result;
     }
 
-    public synchronized void save(java.util.List<TotpEntry> entries) {
+    /** True when the vault could not be read; {@link #save} refuses to run while it is set. */
+    public boolean readFailed() {
+        return _readFailed;
+    }
+
+    /** @return false when nothing was written, so callers can say so instead of lying. */
+    public synchronized boolean save(java.util.List<TotpEntry> entries) {
+        if (_readFailed) {
+            Log.e(TAG, "refusing to save over a vault that could not be read");
+            return false;
+        }
         try {
             JSONArray array = new JSONArray();
             for (TotpEntry e : entries) {
@@ -66,8 +87,10 @@ public class TotpStore {
             try (FileOutputStream fos = new FileOutputStream(_file)) {
                 fos.write(enc);
             }
+            return true;
         } catch (Exception e) {
             Log.e(TAG, "failed to save vault", e);
+            return false;
         }
     }
 

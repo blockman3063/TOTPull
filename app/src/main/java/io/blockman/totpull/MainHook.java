@@ -7,6 +7,8 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 
 import java.io.File;
@@ -50,6 +52,8 @@ public class MainHook implements IXposedHookLoadPackage {
     private static final String ACTION_PROBE = "io.blockman.totpull.action.PROBE";
     /** Sent back with the result. */
     private static final String ACTION_RESULT = "io.blockman.totpull.action.RESULT";
+    /** Sent unprompted once this process can answer, so the vault need not keep asking. */
+    private static final String ACTION_READY = "io.blockman.totpull.action.READY";
 
     /** Riot's own TOTP parameters, confirmed by reverse-matching its on-screen code. */
     private static final String ALGORITHM = "SHA256";
@@ -262,6 +266,50 @@ public class MainHook implements IXposedHookLoadPackage {
 
     // ------------------------------------------------------------------ probe plumbing
 
+    /**
+     * Tells the vault app that we are up and able to answer.
+     *
+     * <p>Needed because the vault cannot ask on its own: once it hands us the foreground, OEM
+     * power management freezes its process within seconds, and every retry it scheduled dies with
+     * the freeze. The vault receives this on a manifest-declared receiver, which wakes it, and
+     * decides there whether an import is actually in progress — so simply opening this app
+     * normally never drags the user anywhere.
+     */
+    private static void announce(Context context) {
+        try {
+            Intent ready = new Intent(ACTION_READY);
+            ready.setPackage(SELF_PACKAGE);
+            ready.putExtra("source_package", TARGET);
+            ready.putExtra("source_label", "Riot Mobile");
+            context.sendBroadcast(ready);
+            log("announced readiness");
+        } catch (Throwable t) {
+            log("announce failed: " + t);
+        }
+    }
+
+    /**
+     * Announces now and a few more times while the app is still starting.
+     *
+     * <p>The first announcement lands before the app has opened its encrypted store, so the vault
+     * gets a "nothing yet" answer. Each later announcement makes it ask again, and the moment the
+     * store is captured the answer carries the seed. Announcements after a successful round are
+     * ignored on the other side, so the extras cost nothing.
+     */
+    private static void announceWithRetries(final Context context) {
+        announce(context);
+        Handler handler = new Handler(Looper.getMainLooper());
+        int[] delays = {1000, 2500, 4500, 7000};
+        for (final int delay : delays) {
+            handler.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    announce(context);
+                }
+            }, delay);
+        }
+    }
+
     private static void installReceiver() {
         if (_receiverInstalled) {
             return;
@@ -291,6 +339,7 @@ public class MainHook implements IXposedHookLoadPackage {
                         app.registerReceiver(receiver, filter);
                     }
                     log("probe receiver ready");
+                    announceWithRetries(app);
                 } catch (Throwable t) {
                     _receiverInstalled = false;
                     log("registerReceiver failed: " + t);
@@ -389,8 +438,53 @@ public class MainHook implements IXposedHookLoadPackage {
             out.putExtra("source_package", TARGET);
             out.putExtra("source_label", "Riot Mobile");
             context.sendBroadcast(out);
+            if (ok) {
+                bringBack(context);
+            }
         } catch (Throwable t) {
             log("reply failed: " + t);
+        }
+    }
+
+    /** When we last pulled the vault app forward, so the retry rounds do not keep doing it. */
+    private static long _lastBringBack;
+
+    /**
+     * Brings the vault app back to the front once we have the seed.
+     *
+     * <p>The vault cannot do this for itself: after it hands us the foreground, Android blocks an
+     * activity start coming from its own receiver, and the notification it posts still needs a
+     * tap. This process is the app the user is looking at, so the very same start is allowed from
+     * here. Only on success — a failed answer may just mean we are still booting, and bouncing the
+     * user out then would kill the round before the next retry.
+     */
+    private static void bringBack(final Context context) {
+        long now = System.currentTimeMillis();
+        if (now - _lastBringBack < 20_000L) {
+            return;
+        }
+        _lastBringBack = now;
+        try {
+            final Intent back = new Intent(Intent.ACTION_MAIN);
+            back.setClassName(SELF_PACKAGE, SELF_PACKAGE + ".ui.MainActivity");
+            back.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                    | Intent.FLAG_ACTIVITY_CLEAR_TOP
+                    | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            // Give the answer broadcast a moment to land, so the report is already on disk by the
+            // time the activity resumes and goes looking for it.
+            new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        context.startActivity(back);
+                        log("brought vault back");
+                    } catch (Throwable t) {
+                        log("bring back failed: " + t);
+                    }
+                }
+            }, 600L);
+        } catch (Throwable t) {
+            log("bring back failed: " + t);
         }
     }
 

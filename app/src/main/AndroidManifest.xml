@@ -79,6 +79,7 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="io.blockman.totpull.action.RESULT" />
+                <action android:name="io.blockman.totpull.action.READY" />
             </intent-filter>
         </receiver>
 

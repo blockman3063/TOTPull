@@ -63,6 +63,8 @@
     <string name="probe_not_running">模块只在目标应用运行的时候才能读到数据，而 Android 会把发往后台应用的广播延后，所以需要把它叫到前台一次。\n\n点下面的按钮打开它，然后立刻切回本应用，导入会自动继续。\n\n如果该应用有分身，请打开你实际登录的那一个。</string>
     <string name="probe_wake_open">去打开</string>
     <string name="probe_parse_failed">读到的数据无法识别</string>
+    <string name="probe_vault_unreadable">保险库读不出来，为免覆盖已停止写入</string>
+    <string name="probe_save_failed">保险库写入失败</string>
     <string name="probe_go_hint">在 %1$s 里打开一次验证码，读到后会自动返回</string>
 
     <string name="report_title">导入结果</string>

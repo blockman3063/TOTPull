@@ -103,6 +103,9 @@ public class MainActivity extends AppCompatActivity {
     private boolean _awaitingRootGrant;
     private long _lastRootAttempt;
 
+    /** Keeps the "vault is unreadable" warning to once per process. */
+    private boolean _vaultWarnShown;
+
     private final Handler _handler = new Handler(Looper.getMainLooper());
     private final Runnable _tick = new Runnable() {
         @Override
@@ -332,6 +335,10 @@ public class MainActivity extends AppCompatActivity {
         }
         _entries.clear();
         _entries.addAll(_store.load());
+        if (_store.readFailed() && !_vaultWarnShown) {
+            _vaultWarnShown = true;
+            toast(getString(R.string.probe_vault_unreadable));
+        }
         if (_adapter != null) {
             _adapter.rebuild();
         }
