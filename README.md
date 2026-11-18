@@ -6,17 +6,22 @@ Pulls the TOTP seed out of an app's encrypted storage on Android, so you can kee
 | --- | --- | --- |
 | Riot Mobile | `com.riotgames.mobile.leagueconnect` | TOTP · SHA-256 · 6 digits · 30 s |
 | Steam | `com.valvesoftware.android.steam.community` | Steam Guard · 5 characters · 30 s |
+| Google Authenticator | `com.google.android.apps.authenticator2` | TOTP / HOTP · per-entry algorithm and digits |
+
+Google Authenticator can return dozens of accounts in one answer; the whole batch is folded into the vault with a single write.
 
 ## Why a hook is needed
 
-Both apps encrypt the secret with a key in the Android keystore, bound to the app's uid. A root shell can copy the ciphertext file but can never decrypt it — the plaintext only exists inside the app's own process. That is the whole reason this project ships as an Xposed module.
+All three apps encrypt their secrets with keys in the Android keystore, bound to each app's uid. A root shell can copy the ciphertext files but can never decrypt them — the plaintext only exists inside the app's own process. That is the whole reason this project ships as an Xposed module.
 
 Riot keeps its seed in `androidx.security` EncryptedSharedPreferences. Steam keeps its guard blob in `shared_prefs/SecureStore.xml` as `{ct, iv, tlen, keystoreAlias}`; the module unwraps it in-process using the app's own keystore entry, whose alias is prefixed (`AES/GCM/NoPadding:key_v1:…`). Steam's shared secret is base64, so it is converted to base32 before being saved as `otpauth://steam/…`.
+
+Google Authenticator v7.2+ stores each signed-in account in `files/accounts/<id>/otp_database.db`; the older global `databases/databases` may be empty. The `secret` column is base64 over an AES/GCM blob (12-byte IV + ciphertext). Its decrypted plaintext is itself a base32 string, sometimes padded with `=` — it must be used directly, not base32-encoded a second time.
 
 ## Requirements
 
 - Android 7.0+ (API 24)
-- One or both source apps installed and signed in
+- Any of the source apps installed and signed in
 - An Xposed-compatible loader:
   - **LSPosed** (root)
   - **LSPatch** (no root) — patch each source app you want to import from

@@ -64,6 +64,7 @@ public class MainActivity extends AppCompatActivity {
     private static final ExtractTarget[] EXTRACT_TARGETS = {
             new ExtractTarget("com.riotgames.mobile.leagueconnect", "Riot Mobile"),
             new ExtractTarget("com.valvesoftware.android.steam.community", "Steam"),
+            new ExtractTarget("com.google.android.apps.authenticator2", "谷歌验证器"),
     };
 
     private static final class ExtractTarget {
@@ -686,8 +687,11 @@ public class MainActivity extends AppCompatActivity {
             boolean duplicate = report.optBoolean("duplicate", false);
             String name = report.optString("name", "");
             String error = report.optString("error", "");
+            String custom = report.optString("message", "");
             String message;
-            if (ok) {
+            if (!custom.isEmpty()) {
+                message = custom;
+            } else if (ok) {
                 message = getString(duplicate ? R.string.report_duplicate : R.string.report_ok,
                         name);
             } else {
@@ -758,10 +762,18 @@ public class MainActivity extends AppCompatActivity {
         probeViaBroadcast(target);
     }
 
-    /** Turns the module's snapshot into an entry. Returns false when it carried nothing usable. */
+    /** Turns the module's snapshot into entries. Returns false when it carried nothing usable. */
     private boolean applySnapshot(ExtractTarget target, String body) {
         try {
             JSONObject json = new JSONObject(body);
+
+            // Google Authenticator (and any other bulk source) drops every account into one
+            // "entries" array. Fold the whole batch in with a single vault write.
+            org.json.JSONArray entries = json.optJSONArray("entries");
+            if (entries != null) {
+                return applySnapshotBatch(target, entries);
+            }
+
             String uri = json.optString("otpauth", "");
             TotpEntry entry = uri.isEmpty() ? null : TotpEntry.fromOtpauth(uri);
             if (entry == null) {
@@ -790,6 +802,50 @@ public class MainActivity extends AppCompatActivity {
         } catch (Exception e) {
             return false;
         }
+    }
+
+    /** Stores a whole snapshot batch in one pass, mirroring ProbeReceiver.handleEntries(). */
+    private boolean applySnapshotBatch(ExtractTarget target, org.json.JSONArray array) {
+        List<TotpEntry> incoming = new ArrayList<>();
+        for (int i = 0; i < array.length(); i++) {
+            TotpEntry entry = TotpEntry.fromOtpauth(array.optString(i));
+            if (entry == null) {
+                continue;
+            }
+            entry.sourcePackage = target.packageName;
+            entry.sourceLabel = target.label;
+            incoming.add(entry);
+        }
+        if (incoming.isEmpty()) {
+            return false;
+        }
+
+        List<TotpEntry> all = _store.load();
+        if (_store.readFailed()) {
+            toast(getString(R.string.probe_vault_unreadable));
+            return false;
+        }
+        int added = 0;
+        for (TotpEntry candidate : incoming) {
+            boolean known = false;
+            for (TotpEntry existing : all) {
+                if (existing.key().equals(candidate.key())) {
+                    known = true;
+                    break;
+                }
+            }
+            if (!known) {
+                all.add(candidate);
+                added++;
+            }
+        }
+        if (added > 0 && !_store.save(all)) {
+            toast(getString(R.string.probe_save_failed));
+            return false;
+        }
+        reload();
+        toast(getString(R.string.report_many, incoming.size(), added));
+        return true;
     }
 
     /**

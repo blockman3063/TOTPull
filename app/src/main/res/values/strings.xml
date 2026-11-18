@@ -73,6 +73,7 @@
     <string name="report_failed">没有读到验证码：%1$s</string>
     <string name="report_timeout">在 %1$s 里没有等到验证码。打开它并显示一次验证码后再试。</string>
     <string name="report_stay">知道了</string>
+    <string name="report_many">已读取到 %1$d 个验证码账号，新增 %2$d 个。</string>
 
     <string name="notif_channel">导入结果</string>
     <string name="notif_title">已读取到验证码</string>

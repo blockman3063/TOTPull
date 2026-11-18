@@ -9,6 +9,7 @@
     <queries>
         <package android:name="com.riotgames.mobile.leagueconnect" />
         <package android:name="com.valvesoftware.android.steam.community" />
+        <package android:name="com.google.android.apps.authenticator2" />
         <package android:name="me.weishu.kernelsu" />
         <package android:name="com.topjohnwu.magisk" />
     </queries>

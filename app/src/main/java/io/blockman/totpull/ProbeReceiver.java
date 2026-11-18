@@ -17,6 +17,7 @@ import androidx.core.content.ContextCompat;
 
 import org.json.JSONObject;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import io.blockman.totpull.ui.MainActivity;
@@ -58,6 +59,7 @@ public class ProbeReceiver extends BroadcastReceiver {
     private static final String[] SOURCES = {
             "com.riotgames.mobile.leagueconnect",
             "com.valvesoftware.android.steam.community",
+            "com.google.android.apps.authenticator2",
     };
 
     @Override
@@ -87,6 +89,12 @@ public class ProbeReceiver extends BroadcastReceiver {
             if (error != null && !error.isEmpty()) {
                 writeReport(context, false, null, null, error, false);
             }
+            return;
+        }
+
+        String bundled = intent.getStringExtra("entries");
+        if (bundled != null) {
+            handleEntries(context, intent, bundled);
             return;
         }
 
@@ -150,6 +158,82 @@ public class ProbeReceiver extends BroadcastReceiver {
         writeReport(context, true, entry.name, entry.issuer, null, duplicate);
 
         notifyAndReturn(context);
+    }
+
+    /**
+     * Stores a whole batch of accounts from one answer.
+     *
+     * <p>Google Authenticator can return dozens of entries; going through the single-entry path
+     * once per account would write the vault dozens of times and show as many reports.
+     */
+    private void handleEntries(Context context, Intent intent, String bundled) {
+        List<TotpEntry> incoming = new ArrayList<>();
+        try {
+            org.json.JSONArray array = new org.json.JSONArray(bundled);
+            String sourcePackage = intent.getStringExtra("source_package");
+            String sourceLabel = intent.getStringExtra("source_label");
+            for (int i = 0; i < array.length(); i++) {
+                TotpEntry entry = TotpEntry.fromOtpauth(array.optString(i));
+                if (entry == null) {
+                    continue;
+                }
+                if (sourcePackage != null) {
+                    entry.sourcePackage = sourcePackage;
+                }
+                if (sourceLabel != null) {
+                    entry.sourceLabel = sourceLabel;
+                }
+                incoming.add(entry);
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "bad entries payload", t);
+            writeReport(context, false, null, null,
+                    context.getString(R.string.probe_parse_failed), false);
+            return;
+        }
+        if (incoming.isEmpty()) {
+            writeReport(context, false, null, null,
+                    context.getString(R.string.probe_parse_failed), false);
+            return;
+        }
+
+        try {
+            TotpStore store = new TotpStore(context);
+            List<TotpEntry> all = store.load();
+            if (store.readFailed()) {
+                Log.w(TAG, "vault unreadable, leaving it alone");
+                writeReport(context, false, null, null,
+                        context.getString(R.string.probe_vault_unreadable), false);
+                return;
+            }
+            int added = 0;
+            for (TotpEntry candidate : incoming) {
+                boolean known = false;
+                for (TotpEntry existing : all) {
+                    if (existing.key().equals(candidate.key())) {
+                        known = true;
+                        break;
+                    }
+                }
+                if (!known) {
+                    all.add(candidate);
+                    added++;
+                }
+            }
+            if (added > 0 && !store.save(all)) {
+                writeReport(context, false, null, null,
+                        context.getString(R.string.probe_save_failed), false);
+                return;
+            }
+            Capabilities.setModuleReady(context, Boolean.TRUE);
+            clearPending(context);
+            writeReportMessage(context,
+                    context.getString(R.string.report_many, incoming.size(), added));
+            notifyAndReturn(context);
+        } catch (Throwable t) {
+            Log.w(TAG, "batch save failed", t);
+            writeReport(context, false, null, null, String.valueOf(t), false);
+        }
     }
 
     /**
@@ -227,6 +311,18 @@ public class ProbeReceiver extends BroadcastReceiver {
             return new JSONObject(raw);
         } catch (Throwable t) {
             return null;
+        }
+    }
+
+    private static void writeReportMessage(Context context, String message) {
+        try {
+            org.json.JSONObject json = new org.json.JSONObject();
+            json.put("ok", true);
+            json.put("ts", System.currentTimeMillis());
+            json.put("message", message);
+            prefs(context).edit().putString(KEY_REPORT, json.toString()).commit();
+        } catch (Throwable t) {
+            Log.w(TAG, "report failed", t);
         }
     }
 

@@ -9,5 +9,6 @@
     <string-array name="xposedscope">
         <item>com.riotgames.mobile.leagueconnect</item>
         <item>com.valvesoftware.android.steam.community</item>
+        <item>com.google.android.apps.authenticator2</item>
     </string-array>
 </resources>

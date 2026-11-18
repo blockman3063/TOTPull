@@ -39,16 +39,16 @@ public final class TotpGenerator {
 
     public static String generateTotp(TotpEntry entry, long timeMillis) {
         long counter = (timeMillis / 1000L) / Math.max(1, entry.period);
-        return generateCode(base32Decode(entry.secret), counter, entry.getAlgorithmForMac(), entry.digits);
+        return generateCode(decodeSecret(entry.secret), counter, entry.getAlgorithmForMac(), entry.digits);
     }
 
     public static String generateHotp(TotpEntry entry, long counter) {
-        return generateCode(base32Decode(entry.secret), counter, entry.getAlgorithmForMac(), entry.digits);
+        return generateCode(decodeSecret(entry.secret), counter, entry.getAlgorithmForMac(), entry.digits);
     }
 
     public static String generateSteam(TotpEntry entry, long timeMillis) {
         long counter = (timeMillis / 1000L) / 30L;
-        byte[] hash = hmac(base32Decode(entry.secret), counter, "SHA1");
+        byte[] hash = hmac(decodeSecret(entry.secret), counter, "SHA1");
         if (hash == null || hash.length < 20) {
             return "";
         }
@@ -62,6 +62,35 @@ public final class TotpGenerator {
             code /= STEAM_ALPHABET.length();
         }
         return sb.toString();
+    }
+
+    /**
+     * Decodes a stored secret into HMAC key bytes, peeling off one extra base32 layer when
+     * present.
+     *
+     * <p>An early Google Authenticator import encoded the decrypted base32 <i>text</i> a second
+     * time. Those secrets are still in some vaults, and they decode to printable base32 instead
+     * of key material. A real random key landing entirely in the 32-character base32 alphabet is
+     * effectively impossible, so this shape is safe to detect and unwrap.
+     */
+    public static byte[] decodeSecret(String secret) {
+        byte[] raw = base32Decode(secret);
+        if (raw.length < 16) {
+            return raw;
+        }
+        for (byte b : raw) {
+            int c = b & 0xff;
+            if (c > 127 || (BASE32_ALPHABET.indexOf(c) < 0 && c != '=')) {
+                return raw;
+            }
+        }
+        String inner = new String(raw, java.nio.charset.StandardCharsets.US_ASCII)
+                .replace("=", "").trim();
+        if (inner.length() < 16) {
+            return raw;
+        }
+        byte[] decoded = base32Decode(inner);
+        return decoded.length >= 10 ? decoded : raw;
     }
 
     public static String generateCode(byte[] key, long counter, String algorithm, int digits) {
@@ -122,7 +151,11 @@ public final class TotpGenerator {
             return false;
         }
         String t = normalizeSecret(s);
-        if (t.isEmpty() || t.length() % 8 != 0) {
+        // Unpadded base32 is exactly 8 characters per five bytes, but the final group is short:
+        // 16 bytes encode to 26 characters. Requiring a multiple of eight rejected perfectly good
+        // secrets (Google Authenticator uses 16-byte ones) while the decoder handles the tail
+        // fine. Length alone is not enough to call it a secret, so check the decoded size too.
+        if (t.length() < 16 || base32Decode(t).length < 10) {
             return false;
         }
         for (int i = 0; i < t.length(); i++) {

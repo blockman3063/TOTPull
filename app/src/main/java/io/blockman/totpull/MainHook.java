@@ -6,6 +6,8 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
+import android.database.Cursor;
+import android.database.sqlite.SQLiteDatabase;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
@@ -50,6 +52,8 @@ public class MainHook implements IXposedHookLoadPackage {
     private static final String TARGET = "com.riotgames.mobile.leagueconnect";
     /** Steam's own app. Its guard secret sits in a SecureStore blob too. */
     private static final String STEAM = "com.valvesoftware.android.steam.community";
+    /** Google Authenticator; keeps an encrypted OTP database per signed-in account. */
+    private static final String GA = "com.google.android.apps.authenticator2";
     private static final String SELF_PACKAGE = "io.blockman.totpull";
 
     /** Sent by the vault app when the user taps "import from app". */
@@ -129,6 +133,18 @@ public class MainHook implements IXposedHookLoadPackage {
             _package = STEAM;
             _label = "Steam";
             if (process != null && !STEAM.equals(process)) {
+                return;
+            }
+            log("attached to " + process);
+            installReceiver();
+            return;
+        }
+        if (GA.equals(lpparam.packageName)) {
+            _package = GA;
+            _label = "Google Authenticator";
+            // The databases live under the main package's files dir, so child processes would
+            // only duplicate the answer for the same set of accounts.
+            if (process != null && !GA.equals(process)) {
                 return;
             }
             log("attached to " + process);
@@ -533,6 +549,10 @@ public class MainHook implements IXposedHookLoadPackage {
             handleSteamProbe(context);
             return;
         }
+        if (GA.equals(_package)) {
+            handleGaProbe(context);
+            return;
+        }
         log("probe received, instances=" + INSTANCES.size());
         String secret = null;
         String puuid = null;
@@ -586,6 +606,181 @@ public class MainHook implements IXposedHookLoadPackage {
         }
 
         reply(context, true, uri, puuid, note.toString(), null);
+    }
+
+    /**
+     * Reads every account out of the current profile's encrypted OTP databases.
+     *
+     * <p>Google Authenticator keeps one database per signed-in Google account under
+     * {@code files/accounts/<id>/otp_database.db}. Its {@code secret} column is base64 over an
+     * AES/GCM blob whose key is a keystore entry bound to this uid, so we can only unwrap it from
+     * inside this process. Unlike Riot there is no single "current" secret — a whole list comes
+     * back, carried in one {@code entries} extra rather than one answer per account.
+     */
+    private static void handleGaProbe(Context context) {
+        org.json.JSONArray uris = new org.json.JSONArray();
+        try {
+            File[] profiles = new File(context.getFilesDir(), "accounts").listFiles();
+            if (profiles != null) {
+                for (File profile : profiles) {
+                    File db = new File(profile, "otp_database.db");
+                    if (!db.isFile()) {
+                        continue;
+                    }
+                    SQLiteDatabase database = SQLiteDatabase.openDatabase(
+                            db.getPath(), null, SQLiteDatabase.OPEN_READONLY);
+                    try {
+                        Cursor rows = database.rawQuery(
+                                "select name,issuer,secret,otp_type,algorithm_deleted,digits_deleted,"
+                                        + "counter from otp_table where is_deleted=0", null);
+                        try {
+                            while (rows.moveToNext()) {
+                                byte[] secret = decryptGaSecret(rows.getString(2));
+                                if (secret == null || secret.length == 0) {
+                                    continue;
+                                }
+                                String name = rows.getString(0);
+                                String issuer = rows.getString(1);
+                                String uri = buildGaUri(name, issuer, secret,
+                                        rows.getString(3), rows.getString(4),
+                                        rows.getInt(5), rows.getLong(6));
+                                if (uri != null && !hasUri(uris, uri)) {
+                                    uris.put(uri);
+                                }
+                            }
+                        } finally {
+                            rows.close();
+                        }
+                    } finally {
+                        database.close();
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            log("google authenticator read failed: " + t);
+        }
+        if (uris.length() == 0) {
+            reply(context, false, null, null, null,
+                    "没能从谷歌验证器读到验证码账号，确认它已经登录并显示过验证码");
+            return;
+        }
+        Application app = _application;
+        if (app != null) {
+            String body = "{\"v\":1,\"entries\":" + uris + ",\"ts\":"
+                    + System.currentTimeMillis() + "}";
+            if (writeSnapshot(app, body)) {
+                _lastSnapshotBody = body;
+            }
+        }
+        replyEntries(context, uris);
+    }
+
+    private static boolean hasUri(org.json.JSONArray uris, String uri) {
+        for (int i = 0; i < uris.length(); i++) {
+            if (uri.equals(uris.optString(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String buildGaUri(String name, String issuer, byte[] secret, String type,
+                                     String algorithm, int digits, long counter) {
+        if (name == null || name.isEmpty()) {
+            return null;
+        }
+        String scheme = "totp";
+        long counterValue = 0;
+        if ("hotp".equalsIgnoreCase(type)) {
+            scheme = "hotp";
+            counterValue = counter;
+        }
+        if (digits < 6 || digits > 8) {
+            digits = 6;
+        }
+        String mac = algorithm == null ? "SHA1" : algorithm.toUpperCase();
+        mac = mac.replace("HMAC", "").replace("-", "");
+        if (!"SHA1".equals(mac) && !"SHA256".equals(mac) && !"SHA512".equals(mac)) {
+            mac = "SHA1";
+        }
+        String who = (issuer == null || issuer.isEmpty())
+                ? name : issuer + ":" + name;
+        StringBuilder uri = new StringBuilder("otpauth://").append(scheme).append('/')
+                .append(encode(who)).append("?secret=").append(gaSecretText(secret));
+        if (issuer != null && !issuer.isEmpty()) {
+            uri.append("&issuer=").append(encode(issuer));
+        }
+        uri.append("&algorithm=").append(mac).append("&digits=").append(digits);
+        if ("hotp".equals(scheme)) {
+            uri.append("&counter=").append(counterValue);
+        } else {
+            uri.append("&period=30");
+        }
+        return uri.toString();
+    }
+
+    /**
+     * The AES payload of a Google Authenticator secret is itself an ASCII base32 string, sometimes
+     * '=' padded - not raw key bytes. Re-encoding it would produce a secret that looks perfectly
+     * valid but generates completely different codes, so keep the text that is already there.
+     */
+    private static String gaSecretText(byte[] decrypted) {
+        if (decrypted == null || decrypted.length == 0) {
+            return "";
+        }
+        String text = new String(decrypted, java.nio.charset.StandardCharsets.US_ASCII).trim();
+        if (text.length() >= 16 && text.matches("[A-Za-z2-7=]+")) {
+            return text.replace("=", "").toUpperCase(java.util.Locale.ROOT);
+        }
+        return base32Encode(decrypted);
+    }
+
+    private static byte[] decryptGaSecret(String encoded) {
+        byte[] blob = android.util.Base64.decode(encoded, android.util.Base64.DEFAULT);
+        if (blob == null || blob.length < 28) {
+            return null;
+        }
+        byte[] iv = new byte[12];
+        byte[] ct = new byte[blob.length - 12];
+        System.arraycopy(blob, 0, iv, 0, 12);
+        System.arraycopy(blob, 12, ct, 0, ct.length);
+        try {
+            java.security.KeyStore ks = java.security.KeyStore.getInstance("AndroidKeyStore");
+            ks.load(null);
+            Enumeration<String> aliases = ks.aliases();
+            while (aliases.hasMoreElements()) {
+                String alias = aliases.nextElement();
+                try {
+                    javax.crypto.SecretKey key = (javax.crypto.SecretKey) ks.getKey(alias, null);
+                    Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+                    cipher.init(Cipher.DECRYPT_MODE, key,
+                            new javax.crypto.spec.GCMParameterSpec(128, iv));
+                    return cipher.doFinal(ct);
+                } catch (Throwable ignored) {
+                    // Not the key this account was sealed with.
+                }
+            }
+        } catch (Throwable t) {
+            log("google authenticator keystore failed: " + t);
+        }
+        return null;
+    }
+
+    private static void replyEntries(Context context, org.json.JSONArray uris) {
+        try {
+            Intent out = new Intent(ACTION_RESULT);
+            out.setPackage(SELF_PACKAGE);
+            out.putExtra("ok", true);
+            out.putExtra("entries", uris.toString());
+            out.putExtra("count", uris.length());
+            out.putExtra("source_package", _package);
+            out.putExtra("source_label", _label);
+            context.sendBroadcast(out);
+            log("sent " + uris.length() + " accounts");
+            bringBack(context);
+        } catch (Throwable t) {
+            log("entries reply failed: " + t);
+        }
     }
 
     private static void handleSteamProbe(Context context) {
