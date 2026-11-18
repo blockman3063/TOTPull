@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">TOTPull</string>
-    <string name="xposed_desc">Pulls the TOTP seed out of Riot Mobile\'s encrypted SharedPreferences.</string>
+    <string name="xposed_desc">Pulls TOTP seeds out of Riot Mobile, Steam and Google Authenticator.</string>
 
     <string name="empty_title">还没有验证码</string>
     <string name="empty_hint">点右下角 + 可以粘贴文本、选择备份文件或手动输入。\n支持 Aegis / Bitwarden / andOTP / 2FAS / FreeOTP / Google Authenticator / Steam 的导出格式，也可以直接在其他 App 里把验证码分享过来。</string>

@@ -142,6 +142,8 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.activity_main);
 
         _store = new TotpStore(this);
+        // One-off repair of legacy Google Authenticator secrets, before the list is built.
+        _store.migrateCanonicalSecrets();
         _adapter = new EntryAdapter(this, _entries);
 
         _listView = findViewById(R.id.list);

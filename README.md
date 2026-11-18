@@ -39,6 +39,14 @@ Tap **从应用导入** (import from app) and pick a source. TOTPull launches it
 
 The broadcast path is complete on its own; root only avoids a round trip. A `su` shell handed to an ordinary app can land in a mount namespace where `/data/data` is unreachable, in which case the snapshot read fails and the broadcast path takes over.
 
+## Browsing codes
+
+Entries are grouped by source app. Tap a group header to fold or unfold it (the chevron points down when open, right when folded); long-press the header to delete the whole group.
+
+The search box matches issuer, name, group, notes and source. The filter dialog offers source and type pickers built from the entries actually in the vault; search and both dimensions AND together. Filtering happens in the list adapter only — the vault is never touched. The subtitle switches to `显示 X / Y 条` while a filter is active.
+
+Tap a code to copy it; long-press an entry to edit or delete it.
+
 ## Other imports
 
 Aegis, Bitwarden, FreeOTP, KeePassXC, and Google Authenticator migration URIs are accepted through the share sheet or the add button.
@@ -47,7 +55,9 @@ Aegis, Bitwarden, FreeOTP, KeePassXC, and Google Authenticator migration URIs ar
 
 Entries are written as a single AES/GCM blob (`vault.bin`) in the app's private directory. The key lives in the Android keystore, so the file is useless when copied off the device. Changing the package name changes the uid and therefore the key — a renamed build starts with an empty vault.
 
-If the vault ever becomes unreadable, writing is refused rather than overwriting it with an empty list. The contents cannot be recovered, but clearing this app's data from system settings removes the broken file and key and lets you import again. Riot and Steam still hold the originals.
+If the vault ever becomes unreadable, writing is refused rather than overwriting it with an empty list. The contents cannot be recovered, but clearing this app's data from system settings removes the broken file and key and lets you import again. Riot, Steam and Google Authenticator still hold the originals.
+
+On startup the vault is normalised once: secrets that an older build double-encoded are rewritten to canonical base32 so exports and de-duplication use the same value as code generation.
 
 ## Status detection
 

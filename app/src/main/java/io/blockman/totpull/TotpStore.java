@@ -72,6 +72,35 @@ public class TotpStore {
         return _readFailed;
     }
 
+    /**
+     * Rewrites legacy secrets into their canonical single-layer form and persists the result.
+     *
+     * <p>An early Google Authenticator import stored the base32 text base32-encoded a second
+     * time. Generation unwraps it on the fly, but export and de-duplication need the real value,
+     * so the vault is normalised once. Returns the number of entries changed.
+     */
+    public synchronized int migrateCanonicalSecrets() {
+        if (!_file.exists()) {
+            return 0;
+        }
+        java.util.List<TotpEntry> entries = load();
+        if (_readFailed) {
+            return 0;
+        }
+        int changed = 0;
+        for (TotpEntry e : entries) {
+            String canonical = TotpGenerator.canonicalSecret(e.secret);
+            if (!canonical.equals(e.secret)) {
+                e.secret = canonical;
+                changed++;
+            }
+        }
+        if (changed > 0) {
+            save(entries);
+        }
+        return changed;
+    }
+
     /** @return false when nothing was written, so callers can say so instead of lying. */
     public synchronized boolean save(java.util.List<TotpEntry> entries) {
         if (_readFailed) {

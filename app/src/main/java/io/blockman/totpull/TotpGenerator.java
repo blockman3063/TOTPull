@@ -65,32 +65,39 @@ public final class TotpGenerator {
     }
 
     /**
-     * Decodes a stored secret into HMAC key bytes, peeling off one extra base32 layer when
-     * present.
+     * Returns the canonical single-layer base32 secret, unwrapping the extra layer left by the
+     * early Google Authenticator import. Used by code generation, de-duplication and export so
+     * all three agree on what a secret means.
      *
-     * <p>An early Google Authenticator import encoded the decrypted base32 <i>text</i> a second
-     * time. Those secrets are still in some vaults, and they decode to printable base32 instead
-     * of key material. A real random key landing entirely in the 32-character base32 alphabet is
-     * effectively impossible, so this shape is safe to detect and unwrap.
+     * <p>That importer base32-encoded the decrypted base32 <i>text</i> a second time. Such a
+     * secret decodes to printable base32 instead of key material. A real random key landing
+     * entirely in the 32-character base32 alphabet is effectively impossible, so this shape is
+     * safe to detect and unwrap.
      */
-    public static byte[] decodeSecret(String secret) {
-        byte[] raw = base32Decode(secret);
+    public static String canonicalSecret(String secret) {
+        String norm = normalizeSecret(secret);
+        byte[] raw = base32Decode(norm);
         if (raw.length < 16) {
-            return raw;
+            return norm;
         }
         for (byte b : raw) {
             int c = b & 0xff;
             if (c > 127 || (BASE32_ALPHABET.indexOf(c) < 0 && c != '=')) {
-                return raw;
+                return norm;
             }
         }
         String inner = new String(raw, java.nio.charset.StandardCharsets.US_ASCII)
                 .replace("=", "").trim();
         if (inner.length() < 16) {
-            return raw;
+            return norm;
         }
         byte[] decoded = base32Decode(inner);
-        return decoded.length >= 10 ? decoded : raw;
+        return decoded.length >= 10 ? normalizeSecret(inner) : norm;
+    }
+
+    /** Decodes a stored secret into HMAC key bytes. */
+    public static byte[] decodeSecret(String secret) {
+        return base32Decode(canonicalSecret(secret));
     }
 
     public static String generateCode(byte[] key, long counter, String algorithm, int digits) {

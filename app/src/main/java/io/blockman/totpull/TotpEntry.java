@@ -67,7 +67,8 @@ public class TotpEntry {
     /** De-duplication key: same issuer + name + secret means the same token. */
     public String key() {
         String n = name == null ? "" : name;
-        return (issuer == null ? "" : issuer) + "|" + n + "|" + (secret == null ? "" : secret);
+        return (issuer == null ? "" : issuer) + "|" + n + "|"
+                + TotpGenerator.canonicalSecret(secret);
     }
 
     public String displayName() {
@@ -106,7 +107,9 @@ public class TotpEntry {
             sb.append("totp/");
         }
         sb.append(encode(label));
-        sb.append("?secret=").append(secret);
+        // Export a secret any otpauth consumer can use. Old double-encoded GA secrets must not
+        // leak out here - they would generate wrong codes everywhere except inside TOTPull.
+        sb.append("?secret=").append(TotpGenerator.canonicalSecret(secret));
         if (issuer != null && issuer.length() > 0) {
             sb.append("&issuer=").append(encode(issuer));
         }
