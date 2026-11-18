@@ -195,10 +195,10 @@ public final class Capabilities {
      * Reads the module's snapshot straight out of the source app's private storage. Returns null
      * when root is unavailable, the file is missing, or the read failed.
      */
-    public static String readSnapshot(Context context) {
+    public static String readSnapshot(Context context, String packageName) {
         StringBuilder attempts = new StringBuilder();
         for (String prefix : DATA_PREFIXES) {
-            String path = prefix + RIOT_PACKAGE + "/files/" + SNAPSHOT_NAME;
+            String path = prefix + packageName + "/files/" + SNAPSHOT_NAME;
             Shell result = su("cat " + path, 8000);
             if (result == null) {
                 lastDiagnostic = "su 没有响应（超时）";
@@ -215,6 +215,11 @@ public final class Capabilities {
         }
         lastDiagnostic = attempts.toString().trim();
         return null;
+    }
+
+    /** Convenience for the passive "is the module alive" check, which only needs any snapshot. */
+    public static String readSnapshot(Context context) {
+        return readSnapshot(context, RIOT_PACKAGE);
     }
 
     /** Last reason a snapshot read failed, surfaced in the capability sheet for diagnosis. */

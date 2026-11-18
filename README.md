@@ -1,52 +1,53 @@
 # TOTPull
 
-Pulls the TOTP seed out of Riot Mobile's encrypted storage, so you can keep generating your own two-factor codes after switching devices or uninstalling the client.
+Pulls the TOTP seed out of an app's encrypted storage on Android, so you can keep generating your own two-factor codes after switching devices or uninstalling the client.
+
+| Source | Package | Code format |
+| --- | --- | --- |
+| Riot Mobile | `com.riotgames.mobile.leagueconnect` | TOTP · SHA-256 · 6 digits · 30 s |
+| Steam | `com.valvesoftware.android.steam.community` | Steam Guard · 5 characters · 30 s |
 
 ## Why a hook is needed
 
-Riot Mobile keeps its TOTP secret in `androidx.security` EncryptedSharedPreferences. The master key lives in the Android keystore and is bound to the app's uid inside the TEE. A root shell can copy the ciphertext file but can never decrypt it — the plaintext only ever exists inside Riot's own process.
+Both apps encrypt the secret with a key in the Android keystore, bound to the app's uid. A root shell can copy the ciphertext file but can never decrypt it — the plaintext only exists inside the app's own process. That is the whole reason this project ships as an Xposed module.
 
-So the seed has to be read from the inside. That is the whole reason this project ships as an Xposed module.
+Riot keeps its seed in `androidx.security` EncryptedSharedPreferences. Steam keeps its guard blob in `shared_prefs/SecureStore.xml` as `{ct, iv, tlen, keystoreAlias}`; the module unwraps it in-process using the app's own keystore entry, whose alias is prefixed (`AES/GCM/NoPadding:key_v1:…`). Steam's shared secret is base64, so it is converted to base32 before being saved as `otpauth://steam/…`.
 
 ## Requirements
 
 - Android 7.0+ (API 24)
-- Riot Mobile (`com.riotgames.mobile.leagueconnect`) installed and signed in
-- An Xposed-compatible loader, either one works:
-  - **LSPosed** (root) — enables the fast path
-  - **LSPatch** (no root) — patch Riot Mobile's APK; no root needed
+- One or both source apps installed and signed in
+- An Xposed-compatible loader:
+  - **LSPosed** (root)
+  - **LSPatch** (no root) — patch each source app you want to import from
 
-The module declares no permissions and no system scope. Its scope is the Riot package plus `io.blockman.totpull` itself — the second one is what lets the module report back that it is actually running (see *Status detection*).
+Scope only the source packages. Do **not** add `io.blockman.totpull` itself: LSPosed rejects `module cannot target itself`, and module readiness is detected from a real answer instead.
 
-## Two transport paths
+## Import flow
+
+Tap **从应用导入** (import from app) and pick a source. TOTPull launches it and steps into the background. When the module is ready it announces itself; TOTPull's manifest-declared receiver wakes the frozen process, asks for the seed, saves the entry, and the module brings TOTPull back with a report dialog. If that activity start is blocked, a notification provides the way back.
 
 | Path | Needs root | How |
-|---|---|---|
-| Fast path | yes | Module writes a snapshot to the Riot app's private dir; the app reads it through `su` |
-| Fallback | no | Module broadcasts the seed when Riot generates a code; the app listens |
+| --- | --- | --- |
+| Snapshot | yes | Module writes a sealed snapshot into the source app's private dir; TOTPull reads it through `su` |
+| Broadcast | no | Readiness announcement → probe → answer, all over package-targeted broadcasts |
 
-The fast path is a convenience only. The fallback alone is enough to import — this is why the module works under LSPatch.
+The broadcast path is complete on its own; root only avoids a round trip. A `su` shell handed to an ordinary app can land in a mount namespace where `/data/data` is unreachable, in which case the snapshot read fails and the broadcast path takes over.
 
-Note that a `su` shell handed to an ordinary app can land in a mount namespace where `/data/data` is not reachable, in which case the fast path fails and the fallback takes over. Both outcomes are handled.
+## Other imports
 
-## Usage
+Aegis, Bitwarden, FreeOTP, KeePassXC, and Google Authenticator migration URIs are accepted through the share sheet or the add button.
 
-1. Install the APK.
-2. Enable the module in LSPosed (or patch Riot Mobile with LSPatch) and scope it to
-   `com.riotgames.mobile.leagueconnect` **and** `io.blockman.totpull`.
-3. Open Riot Mobile and let it show a verification code once.
-4. Open TOTPull → **从应用导入** (import from app).
+## Storage
 
-Existing entries can also be imported from Aegis, Bitwarden, FreeOTP, KeePassXC, or a Google Authenticator migration URI, via share sheet or the add button.
+Entries are written as a single AES/GCM blob (`vault.bin`) in the app's private directory. The key lives in the Android keystore, so the file is useless when copied off the device. Changing the package name changes the uid and therefore the key — a renamed build starts with an empty vault.
 
-Storage: entries are written as a single AES/GCM blob (`vault.bin`) in the app's private directory. The key lives in the Android keystore, so the file is useless when copied off the device. Changing the package name changes the uid, and with it the key — a renamed build starts with an empty vault and the seed must be pulled again.
+If the vault ever becomes unreadable, writing is refused rather than overwriting it with an empty list. The contents cannot be recovered, but clearing this app's data from system settings removes the broken file and key and lets you import again. Riot and Steam still hold the originals.
 
 ## Status detection
 
-The info page reports what is actually available rather than guessing:
-
 - **Root** — four-state probe (granted / denied / no response / undetected). A timeout is never cached as a denial.
-- **LSPosed** — the module sets a flag inside this app's own process when it is injected; the UI reads that flag. This is a real handshake, not a guess from outside, and it needs no root.
+- **Module** — marked ready only after a source app actually answered a probe, so the indicator reflects a working hook rather than a framework guess.
 
 ## Build
 
@@ -62,4 +63,4 @@ The debug keystore in `keystore/` is the standard public Android debug key (`and
 
 This tool extracts a secret from an app you installed, on a device you own, for an account you control. Use it on your own accounts only.
 
-Riot's terms of service may not permit modifying their client. That risk is yours to evaluate.
+Riot's and Valve's terms of service may not permit modifying their clients. That risk is yours to evaluate.

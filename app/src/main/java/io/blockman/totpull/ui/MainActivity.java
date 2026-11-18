@@ -63,6 +63,7 @@ public class MainActivity extends AppCompatActivity {
      */
     private static final ExtractTarget[] EXTRACT_TARGETS = {
             new ExtractTarget("com.riotgames.mobile.leagueconnect", "Riot Mobile"),
+            new ExtractTarget("com.valvesoftware.android.steam.community", "Steam"),
     };
 
     private static final class ExtractTarget {
@@ -739,7 +740,7 @@ public class MainActivity extends AppCompatActivity {
         if (Capabilities.hasRoot(this) && Capabilities.fastPathEnabled(this)) {
             toast(getString(R.string.probe_requesting, target.label));
             new Thread(() -> {
-                String body = Capabilities.readSnapshot(this);
+                String body = Capabilities.readSnapshot(this, target.packageName);
                 runOnUiThread(() -> {
                     if (body != null && applySnapshot(target, body)) {
                         setModuleReady(Boolean.TRUE);

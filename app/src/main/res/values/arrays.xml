@@ -8,5 +8,6 @@
     -->
     <string-array name="xposedscope">
         <item>com.riotgames.mobile.leagueconnect</item>
+        <item>com.valvesoftware.android.steam.community</item>
     </string-array>
 </resources>

@@ -8,6 +8,7 @@
     <!-- Android 11+ 需要显式声明才能查询/唤起待提取的目标应用 -->
     <queries>
         <package android:name="com.riotgames.mobile.leagueconnect" />
+        <package android:name="com.valvesoftware.android.steam.community" />
         <package android:name="me.weishu.kernelsu" />
         <package android:name="com.topjohnwu.magisk" />
     </queries>

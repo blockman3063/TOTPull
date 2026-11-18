@@ -21,6 +21,8 @@ import java.util.Enumeration;
 import java.util.List;
 import java.util.Map;
 
+import javax.crypto.Cipher;
+
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
@@ -46,6 +48,8 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 public class MainHook implements IXposedHookLoadPackage {
     private static final String TAG = "RiotTotpDump";
     private static final String TARGET = "com.riotgames.mobile.leagueconnect";
+    /** Steam's own app. Its guard secret sits in a SecureStore blob too. */
+    private static final String STEAM = "com.valvesoftware.android.steam.community";
     private static final String SELF_PACKAGE = "io.blockman.totpull";
 
     /** Sent by the vault app when the user taps "import from app". */
@@ -80,10 +84,24 @@ public class MainHook implements IXposedHookLoadPackage {
     /** Name of the file the vault app reads through root. Lives in the source app's files dir. */
     private static final String SNAPSHOT_NAME = ".totp_snapshot";
 
+    /** Alphabet for the secret formats we have to convert between; Steam hands us base64. */
+    private static final String BASE32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    private static final String BASE64 =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
     private static volatile String _lastSnapshotBody;
     private static volatile Application _application;
 
     private static boolean _receiverInstalled;
+
+    /** Package and human label of the app we are injected into; one value per process. */
+    private static volatile String _package = TARGET;
+    private static volatile String _label = "Riot Mobile";
+
+    /** What we picked out of Steam's decrypted SecureStore blob, if anything. */
+    private static volatile String _steamSecret;
+    private static volatile String _steamAccount;
+    private static volatile String _steamId;
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) {
@@ -94,16 +112,31 @@ public class MainHook implements IXposedHookLoadPackage {
             markSelfInjected(lpparam);
             return;
         }
-        if (!TARGET.equals(lpparam.packageName)) {
-            return;
-        }
-        // The encrypted prefs live in the main process; child processes have no copy.
         String process = lpparam.processName;
-        if (process != null && !TARGET.equals(process)) {
+        if (TARGET.equals(lpparam.packageName)) {
+            _package = TARGET;
+            _label = "Riot Mobile";
+            // The encrypted prefs live in the main process; child processes have no copy.
+            if (process != null && !TARGET.equals(process)) {
+                return;
+            }
+            log("attached to " + process);
+            attachRiot(lpparam);
+            installReceiver();
             return;
         }
-        log("attached to " + process);
+        if (STEAM.equals(lpparam.packageName)) {
+            _package = STEAM;
+            _label = "Steam";
+            if (process != null && !STEAM.equals(process)) {
+                return;
+            }
+            log("attached to " + process);
+            installReceiver();
+        }
+    }
 
+    private static void attachRiot(XC_LoadPackage.LoadPackageParam lpparam) {
         List<String> candidates = new ArrayList<>();
         try {
             candidates.addAll(findSharedPrefsImplementations(lpparam.classLoader));
@@ -124,8 +157,137 @@ public class MainHook implements IXposedHookLoadPackage {
             } catch (Throwable ignored) {
             }
         }
+    }
 
-        installReceiver();
+    /**
+     * Unwraps Steam's SecureStore blob ourselves instead of waiting to catch the app doing it.
+     *
+     * <p>The file is {@code shared_prefs/SecureStore.xml} holding {@code {ct, iv, tlen, scheme:
+     * aes, keystoreAlias: key_v1, usesKeystoreSuffix: true}}, i.e. an AES/GCM value whose key is a
+     * keystore entry bound to this app's uid. We are running inside that process, so we can borrow
+     * the key — which matters because the app only decrypts the guard data when it needs a code,
+     * and there is no reliable way to make it do that on demand.
+     *
+     * <p>The alias carries a suffix we do not know, so it is matched by prefix.
+     */
+    private static boolean readSteamStore(Context context) {
+        try {
+            SharedPreferences prefs =
+                    context.getSharedPreferences("SecureStore", Context.MODE_PRIVATE);
+            Map<String, ?> all = prefs.getAll();
+            for (Map.Entry<String, ?> entry : all.entrySet()) {
+                if (!entry.getKey().contains("SteamGuard")) {
+                    continue;
+                }
+                org.json.JSONObject blob = new org.json.JSONObject(String.valueOf(entry.getValue()));
+                String ct = blob.optString("ct", "");
+                String iv = blob.optString("iv", "");
+                if (ct.isEmpty() || iv.isEmpty()) {
+                    continue;
+                }
+                byte[] plain = decryptBlob(blob.optString("keystoreAlias", "key_v1"), iv, ct,
+                        blob.optInt("tlen", 128));
+                if (plain == null) {
+                    log("guard blob could not be decrypted");
+                    continue;
+                }
+                org.json.JSONObject payload =
+                        new org.json.JSONObject(new String(plain, "UTF-8"));
+                org.json.JSONObject guard = findGuardNode(payload, 0);
+                if (guard == null) {
+                    log("no shared_secret under " + payload.names());
+                    continue;
+                }
+                String secret = guard.optString("shared_secret", "");
+                if (secret.isEmpty()) {
+                    continue;
+                }
+                _steamSecret = secret;
+                _steamAccount = guard.optString("account_name", "");
+                _steamId = guard.optString("steamid", "");
+                if (_steamAccount.isEmpty() && _steamId.isEmpty()) {
+                    _steamAccount = payload.optString("account_name", "");
+                    _steamId = payload.optString("steamid", "");
+                }
+                log("read the Steam guard secret from the store");
+                writeSteamSnapshot();
+                return true;
+            }
+        } catch (Throwable t) {
+            log("steam store read failed: " + t);
+        }
+        return false;
+    }
+
+    /**
+     * Finds the object that actually holds {@code shared_secret}.
+     *
+     * <p>The store keeps one record per signed-in account, wrapped as {@code {"accounts": ...}},
+     * and the exact nesting is not part of any contract we control — so walk it instead of
+     * assuming a shape.
+     */
+    private static org.json.JSONObject findGuardNode(org.json.JSONObject object, int depth) {
+        if (object == null || depth > 4) {
+            return null;
+        }
+        if (object.optString("shared_secret", "").length() > 0) {
+            return object;
+        }
+        java.util.Iterator<String> keys = object.keys();
+        while (keys.hasNext()) {
+            Object child = object.opt(keys.next());
+            if (child instanceof org.json.JSONObject) {
+                org.json.JSONObject hit = findGuardNode((org.json.JSONObject) child, depth + 1);
+                if (hit != null) {
+                    return hit;
+                }
+            } else if (child instanceof org.json.JSONArray) {
+                org.json.JSONArray array = (org.json.JSONArray) child;
+                for (int i = 0; i < array.length(); i++) {
+                    Object item = array.opt(i);
+                    if (item instanceof org.json.JSONObject) {
+                        org.json.JSONObject hit =
+                                findGuardNode((org.json.JSONObject) item, depth + 1);
+                        if (hit != null) {
+                            return hit;
+                        }
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    private static byte[] decryptBlob(String aliasPrefix, String ivBase64, String ctBase64,
+                                      int tagBits) {
+        try {
+            java.security.KeyStore ks = java.security.KeyStore.getInstance("AndroidKeyStore");
+            ks.load(null);
+            Enumeration<String> aliases = ks.aliases();
+            while (aliases.hasMoreElements()) {
+                String alias = aliases.nextElement();
+                // The library names its entry "AES/GCM/NoPadding:key_v1:keystoreUnauthenticated",
+                // so the configured alias sits in the middle rather than at the start.
+                if (!alias.contains(aliasPrefix)) {
+                    continue;
+                }
+                try {
+                    javax.crypto.SecretKey key = (javax.crypto.SecretKey) ks.getKey(alias, null);
+                    Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+                    cipher.init(Cipher.DECRYPT_MODE, key,
+                            new javax.crypto.spec.GCMParameterSpec(tagBits,
+                                    android.util.Base64.decode(ivBase64, android.util.Base64.DEFAULT)));
+                    byte[] plain = cipher.doFinal(
+                            android.util.Base64.decode(ctBase64, android.util.Base64.DEFAULT));
+                    return plain;
+                } catch (Throwable t) {
+                    log("alias " + alias + " failed: " + t);
+                }
+            }
+        } catch (Throwable t) {
+            log("keystore access failed: " + t);
+        }
+        return null;
     }
 
     /**
@@ -214,6 +376,19 @@ public class MainHook implements IXposedHookLoadPackage {
             if (body.equals(_lastSnapshotBody)) {
                 return;
             }
+            if (writeSnapshot(app, body)) {
+                _lastSnapshotBody = body;
+            }
+        } catch (Throwable t) {
+            log("snapshot failed: " + t);
+        } finally {
+            BUSY.set(null);
+        }
+    }
+
+    /** Atomic write into the source app's own files dir; returns whether it landed. */
+    private static boolean writeSnapshot(Application app, String body) {
+        try {
             File target = new File(app.getFilesDir(), SNAPSHOT_NAME);
             File temp = new File(app.getFilesDir(), SNAPSHOT_NAME + ".tmp");
             try (FileOutputStream out = new FileOutputStream(temp)) {
@@ -225,11 +400,10 @@ public class MainHook implements IXposedHookLoadPackage {
                 target.delete();
                 temp.renameTo(target);
             }
-            _lastSnapshotBody = body;
+            return true;
         } catch (Throwable t) {
-            log("snapshot failed: " + t);
-        } finally {
-            BUSY.set(null);
+            log("snapshot write failed: " + t);
+            return false;
         }
     }
 
@@ -279,8 +453,8 @@ public class MainHook implements IXposedHookLoadPackage {
         try {
             Intent ready = new Intent(ACTION_READY);
             ready.setPackage(SELF_PACKAGE);
-            ready.putExtra("source_package", TARGET);
-            ready.putExtra("source_label", "Riot Mobile");
+            ready.putExtra("source_package", _package);
+            ready.putExtra("source_label", _label);
             context.sendBroadcast(ready);
             log("announced readiness");
         } catch (Throwable t) {
@@ -340,6 +514,11 @@ public class MainHook implements IXposedHookLoadPackage {
                     }
                     log("probe receiver ready");
                     announceWithRetries(app);
+                    // The payload may have been decrypted before this hook ran, in which case the
+                    // snapshot was skipped for want of an Application to write through.
+                    if (STEAM.equals(_package) && _steamSecret != null) {
+                        writeSteamSnapshot();
+                    }
                 } catch (Throwable t) {
                     _receiverInstalled = false;
                     log("registerReceiver failed: " + t);
@@ -350,6 +529,10 @@ public class MainHook implements IXposedHookLoadPackage {
 
     /** Answers exactly one request, then goes quiet again. */
     private static void handleProbe(Context context) {
+        if (STEAM.equals(_package)) {
+            handleSteamProbe(context);
+            return;
+        }
         log("probe received, instances=" + INSTANCES.size());
         String secret = null;
         String puuid = null;
@@ -405,6 +588,111 @@ public class MainHook implements IXposedHookLoadPackage {
         reply(context, true, uri, puuid, note.toString(), null);
     }
 
+    private static void handleSteamProbe(Context context) {
+        if (_steamSecret == null) {
+            readSteamStore(context);
+        }
+        String secret = _steamSecret;
+        if (secret == null) {
+            reply(context, false, null, null, null,
+                    "没读到 Steam Guard 密钥，确认这台机器上登录过 Steam 手机令牌");
+            return;
+        }
+        String account = _steamAccount == null ? "" : _steamAccount;
+        reply(context, true, buildSteamUri(secret, account), _steamId, null, null);
+    }
+
+    /**
+     * Builds the URI the vault already understands for this type.
+     *
+     * <p>Steam's shared secret is base64 while otpauth secrets are base32, and the code itself is
+     * five characters from a custom alphabet rather than six digits — the vault keys all of that
+     * off the {@code steam/} prefix, which is why this looks nothing like the Riot one.
+     */
+    private static String buildSteamUri(String base64Secret, String account) {
+        byte[] raw = base64Decode(base64Secret);
+        if (raw == null || raw.length == 0) {
+            return null;
+        }
+        String who = account == null || account.isEmpty() ? "Steam" : account;
+        return "otpauth://steam/" + encode("Steam:" + who)
+                + "?secret=" + base32Encode(raw)
+                + "&algorithm=SHA1&digits=5&period=30";
+    }
+
+    /** Leaves a Steam snapshot where root can read it, mirroring the Riot path. */
+    private static void writeSteamSnapshot() {
+        Application app = _application;
+        String uri = buildSteamUri(_steamSecret, _steamAccount);
+        if (app == null || uri == null) {
+            return;
+        }
+        String body = "{\"v\":1"
+                + ",\"otpauth\":" + quote(uri)
+                + ",\"puuid\":" + quote(_steamId)
+                + ",\"ts\":" + System.currentTimeMillis()
+                + "}";
+        if (body.equals(_lastSnapshotBody)) {
+            return;
+        }
+        if (writeSnapshot(app, body)) {
+            _lastSnapshotBody = body;
+        }
+    }
+
+    private static byte[] base64Decode(String value) {
+        int[] map = new int[256];
+        java.util.Arrays.fill(map, -1);
+        for (int i = 0; i < BASE64.length(); i++) {
+            map[BASE64.charAt(i)] = i;
+        }
+        int len = value.length();
+        byte[] out = new byte[len * 3 / 4 + 3];
+        int acc = 0;
+        int bits = 0;
+        int pos = 0;
+        for (int i = 0; i < len; i++) {
+            char c = value.charAt(i);
+            if (c == '=' || c > 255) {
+                continue;
+            }
+            int v = map[c];
+            if (v < 0) {
+                if (c == '\n' || c == '\r' || c == ' ') {
+                    continue;
+                }
+                return null;
+            }
+            acc = (acc << 6) | v;
+            bits += 6;
+            if (bits >= 8) {
+                bits -= 8;
+                out[pos++] = (byte) ((acc >> bits) & 0xff);
+            }
+        }
+        byte[] trimmed = new byte[pos];
+        System.arraycopy(out, 0, trimmed, 0, pos);
+        return trimmed;
+    }
+
+    private static String base32Encode(byte[] data) {
+        StringBuilder sb = new StringBuilder((data.length * 8 + 4) / 5);
+        int acc = 0;
+        int bits = 0;
+        for (byte b : data) {
+            acc = (acc << 8) | (b & 0xff);
+            bits += 8;
+            while (bits >= 5) {
+                bits -= 5;
+                sb.append(BASE32.charAt((acc >> bits) & 0x1f));
+            }
+        }
+        if (bits > 0) {
+            sb.append(BASE32.charAt((acc << (5 - bits)) & 0x1f));
+        }
+        return sb.toString();
+    }
+
     /** Builds the otpauth URI so the vault app never has to know this app's TOTP parameters. */
     private static String buildOtpauth(String secret) {
         String issuer = "Riot Games";
@@ -435,8 +723,8 @@ public class MainHook implements IXposedHookLoadPackage {
             if (error != null) {
                 out.putExtra("error", error);
             }
-            out.putExtra("source_package", TARGET);
-            out.putExtra("source_label", "Riot Mobile");
+            out.putExtra("source_package", _package);
+            out.putExtra("source_label", _label);
             context.sendBroadcast(out);
             if (ok) {
                 bringBack(context);

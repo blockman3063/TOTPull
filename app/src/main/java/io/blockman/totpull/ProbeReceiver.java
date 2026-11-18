@@ -57,6 +57,7 @@ public class ProbeReceiver extends BroadcastReceiver {
      */
     private static final String[] SOURCES = {
             "com.riotgames.mobile.leagueconnect",
+            "com.valvesoftware.android.steam.community",
     };
 
     @Override
