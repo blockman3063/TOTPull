@@ -53,6 +53,8 @@ public final class HookCore {
     private static final String GA = "com.google.android.apps.authenticator2";
     /** Aegis; its vault stays encrypted on disk, but entries are plaintext once unlocked. */
     private static final String AEGIS = "com.beemdevelopment.aegis";
+    /** Microsoft Authenticator; OATH seeds are plain Base64 in its own SQLite database. */
+    private static final String AZURE = "com.azure.authenticator";
     private static final String SELF_PACKAGE = "io.blockman.totpull";
 
     /** Sent by the vault app when the user taps "import from app". */
@@ -616,6 +618,10 @@ public final class HookCore {
             handleAegisProbe(context);
             return;
         }
+        if (AZURE.equals(_package)) {
+            handleAzureProbe(context);
+            return;
+        }
         log("probe received, instances=" + INSTANCES.size());
         String secret = null;
         String puuid = null;
@@ -725,6 +731,66 @@ public final class HookCore {
         if (uris.length() == 0) {
             reply(context, false, null, null, null,
                     "没能从谷歌验证器读到验证码账号，确认它已经登录并显示过验证码");
+            return;
+        }
+        Application app = _application;
+        if (app != null) {
+            String body = "{\"v\":1,\"entries\":" + uris + ",\"ts\":"
+                    + System.currentTimeMillis() + "}";
+            if (writeSnapshot(app, body)) {
+                _lastSnapshotBody = body;
+            }
+        }
+        replyEntries(context, uris);
+    }
+
+    /**
+     * Reads OATH accounts straight out of Microsoft Authenticator's own PhoneFactor database.
+     *
+     * <p>Unlike the other sources there is nothing to decrypt: {@code oath_secret_key} is plain
+     * Base64 of the HMAC key. Running inside the app process means we can open its private
+     * database directly with no root and no keystore access — this is the hook/flavour-free route
+     * that works under LSPatch as well as LSPosed.
+     */
+    private static void handleAzureProbe(Context context) {
+        org.json.JSONArray uris = new org.json.JSONArray();
+        try {
+            File db = context.getDatabasePath("PhoneFactor");
+            if (db.isFile()) {
+                SQLiteDatabase database = SQLiteDatabase.openDatabase(
+                        db.getPath(), null, SQLiteDatabase.OPEN_READONLY);
+                try {
+                    Cursor rows = database.rawQuery(
+                            "select username, oath_secret_key from accounts "
+                                    + "where oath_enabled=1 and oath_secret_key <> ''", null);
+                    try {
+                        while (rows.moveToNext()) {
+                            byte[] raw = android.util.Base64.decode(rows.getString(1),
+                                    android.util.Base64.DEFAULT);
+                            if (raw.length < 10) {
+                                continue;
+                            }
+                            String username = rows.getString(0);
+                            String uri = "otpauth://totp/Microsoft:" + encode(username)
+                                    + "?secret=" + base32Encode(raw)
+                                    + "&issuer=Microsoft&digits=8&period=30&algorithm=SHA1";
+                            if (!hasUri(uris, uri)) {
+                                uris.put(uri);
+                            }
+                        }
+                    } finally {
+                        rows.close();
+                    }
+                } finally {
+                    database.close();
+                }
+            }
+        } catch (Throwable t) {
+            log("microsoft authenticator read failed: " + t);
+        }
+        if (uris.length() == 0) {
+            reply(context, false, null, null, null,
+                    "没能从 Microsoft Authenticator 读到验证码账号，确认它已经登录并显示过验证码");
             return;
         }
         Application app = _application;

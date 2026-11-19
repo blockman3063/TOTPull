@@ -7,12 +7,21 @@ Pulls the TOTP seed out of an app's encrypted storage on Android, so you can kee
 | Riot Mobile | `com.riotgames.mobile.leagueconnect` | TOTP · SHA-256 · 6 digits · 30 s |
 | Steam | `com.valvesoftware.android.steam.community` | Steam Guard · 5 characters · 30 s |
 | Google Authenticator | `com.google.android.apps.authenticator2` | TOTP / HOTP · per-entry algorithm and digits |
+| Aegis | `com.beemdevelopment.aegis` | per-entry algorithm and digits |
+| Microsoft Authenticator | `com.azure.authenticator` | TOTP · SHA-1 · 8 digits · 30 s · root only |
 
 Google Authenticator can return dozens of accounts in one answer; the whole batch is folded into the vault with a single write.
 
 ## Why a hook is needed
 
-All three apps encrypt their secrets with keys in the Android keystore, bound to each app's uid. A root shell can copy the ciphertext files but can never decrypt them — the plaintext only exists inside the app's own process. That is the whole reason this project ships as an Xposed module.
+Riot, Steam and Google Authenticator encrypt their secrets with keys in the Android keystore, bound to each app's uid. A root shell can copy the ciphertext files but can never decrypt them — the plaintext only exists inside the app's own process. That is the whole reason this project ships as an Xposed module.
+
+Microsoft Authenticator is the exception: its OATH seed sits in `databases/PhoneFactor` as a plain Base64 blob, with no keystore wrapping, so no decryption is ever needed. It has two transports, offered as a choice in **从应用导入**:
+
+- **Module read** — with the module in its LSPosed scope, the injected process opens its own database directly (`context.getDatabasePath`) and replies over the broadcast. No root, works under LSPatch too.
+- **Root read** — TOTPull copies the database (plus WAL/SHM) with `su -M` into its own files dir and reads `accounts.oath_secret_key` through Android's SQLite. No Xposed scope needed.
+
+Both decode the raw key from base64 then re-encode to base32 before import, and produce 8-digit SHA-1 codes.
 
 Riot keeps its seed in `androidx.security` EncryptedSharedPreferences. Steam keeps its guard blob in `shared_prefs/SecureStore.xml` as `{ct, iv, tlen, keystoreAlias}`; the module unwraps it in-process using the app's own keystore entry, whose alias is prefixed (`AES/GCM/NoPadding:key_v1:…`). Steam's shared secret is base64, so it is converted to base32 before being saved as `otpauth://steam/…`.
 

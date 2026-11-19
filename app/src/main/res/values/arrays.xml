@@ -11,5 +11,6 @@
         <item>com.valvesoftware.android.steam.community</item>
         <item>com.google.android.apps.authenticator2</item>
         <item>com.beemdevelopment.aegis</item>
+        <item>com.azure.authenticator</item>
     </string-array>
 </resources>

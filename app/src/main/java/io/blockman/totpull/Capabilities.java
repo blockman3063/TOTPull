@@ -31,6 +31,9 @@ public final class Capabilities {
     /** Package we know how to extract from today. */
     public static final String RIOT_PACKAGE = "com.riotgames.mobile.leagueconnect";
 
+    /** Microsoft Authenticator: OATH seeds live in the PhoneFactor SQLite database. */
+    public static final String AZURE_PACKAGE = "com.azure.authenticator";
+
     /** Snapshot the module leaves behind inside the source app's private directory. */
     public static final String SNAPSHOT_NAME = ".totp_snapshot";
 
@@ -236,6 +239,43 @@ public final class Capabilities {
             if (result.exitCode == 0 && !result.output.trim().isEmpty()) {
                 lastDiagnostic = "";
                 return result.output.trim();   // 这就是加密 vault JSON
+            }
+        }
+        lastDiagnostic = attempts.toString().trim();
+        return null;
+    }
+
+    /**
+     * Copies Microsoft Authenticator's PhoneFactor database (plus its WAL/SHM siblings) into our
+     * own files directory so the app can open it with Android's SQLite. The original is only
+     * reachable with root, and a running Authenticator keeps the freshest rows in the WAL, so all
+     * three files must travel together.
+     */
+    public static File copyAzureDatabase(Context context) {
+        File dir = new File(context.getFilesDir(), "azure_tmp");
+        if (!dir.exists() && !dir.mkdirs()) {
+            lastDiagnostic = "无法创建临时目录";
+            return null;
+        }
+        StringBuilder attempts = new StringBuilder();
+        for (String prefix : DATA_PREFIXES) {
+            String src = prefix + AZURE_PACKAGE + "/databases/PhoneFactor";
+            String dstDir = dir.getAbsolutePath();
+            // cp with a trailing * grabs PhoneFactor, -wal and -shm in one shot. Redirect stderr
+            // so an absent WAL/SHM on a quiescent app does not count as a failure.
+            String cmd = "cp -f " + src + "* " + dstDir + "/ 2>/dev/null; "
+                    + "chmod 666 " + dstDir + "/PhoneFactor* 2>/dev/null";
+            Shell result = su(cmd, 8000);
+            if (result == null) {
+                lastDiagnostic = "su 没有响应（超时）";
+                return null;
+            }
+            File db = new File(dir, "PhoneFactor");
+            attempts.append(src).append(": exit=").append(result.exitCode)
+                    .append(" size=").append(db.exists() ? db.length() : 0).append('\n');
+            if (db.exists() && db.length() > 0) {
+                lastDiagnostic = "";
+                return db;
             }
         }
         lastDiagnostic = attempts.toString().trim();

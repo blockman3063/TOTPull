@@ -3,6 +3,8 @@ package io.blockman.totpull.ui;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.database.Cursor;
+import android.database.sqlite.SQLiteDatabase;
 import android.content.Intent;
 import android.content.res.ColorStateList;
 import android.graphics.Typeface;
@@ -31,6 +33,7 @@ import com.google.android.material.floatingactionbutton.FloatingActionButton;
 
 import org.json.JSONObject;
 
+import java.io.File;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -76,12 +79,14 @@ public class MainActivity extends AppCompatActivity {
      * side; the module answers with a ready-made otpauth URI so this side stays format-agnostic.
      */
     private static final String AEGIS_PACKAGE = "com.beemdevelopment.aegis";
+    private static final String AZURE_PACKAGE = "com.azure.authenticator";
 
     static final ExtractTarget[] EXTRACT_TARGETS = {
             new ExtractTarget("com.riotgames.mobile.leagueconnect", "Riot Mobile"),
             new ExtractTarget("com.valvesoftware.android.steam.community", "Steam"),
             new ExtractTarget("com.google.android.apps.authenticator2", "谷歌验证器"),
             new ExtractTarget(AEGIS_PACKAGE, "Aegis"),
+            new ExtractTarget(AZURE_PACKAGE, "Microsoft Authenticator"),
     };
 
     static final class ExtractTarget {
@@ -862,6 +867,10 @@ public class MainActivity extends AppCompatActivity {
             showAegisRouteDialog(target);
             return;
         }
+        if (AZURE_PACKAGE.equals(target.packageName)) {
+            showAzureRouteDialog(target);
+            return;
+        }
         if (_pendingProbe != null) {
             return;
         }
@@ -923,6 +932,92 @@ public class MainActivity extends AppCompatActivity {
                 }
             });
         }).start();
+    }
+
+    /**
+     * Microsoft Authenticator has no Xposed extractor - its OATH seed is a plain Base64 blob in
+     * the PhoneFactor SQLite database. Root is the only transport. Copy the database out, then
+     * parse it on the UI-free worker thread.
+     */
+    /** Azure has two transports: module read (no root) or root database read. */
+    private void showAzureRouteDialog(ExtractTarget target) {
+        new MaterialAlertDialogBuilder(this)
+                .setTitle("Microsoft Authenticator 导入方式")
+                .setItems(new String[]{
+                        "模块直读（免 root，需先把本模块加入它的作用域）",
+                        "Root 读数据库（需 root，无需 Xposed 作用域）",
+                }, (dialog, which) -> {
+                    if (which == 0) {
+                        probeViaBroadcast(target);
+                    } else {
+                        readAzureByRoot(target);
+                    }
+                })
+                .show();
+    }
+
+    private void readAzureByRoot(ExtractTarget target) {
+        new Thread(() -> {
+            int rootState = Capabilities.detectRoot(this);
+            if (rootState != Capabilities.ROOT_GRANTED) {
+                runOnUiThread(() -> toast(rootState == Capabilities.ROOT_TIMEOUT
+                        ? "root 检测超时，请在授权管理器里允许 TOTPull 后重试"
+                        : "读 Microsoft Authenticator 需要 root；没有 root 请用文件导入"));
+                return;
+            }
+            File db = Capabilities.copyAzureDatabase(this);
+            org.json.JSONArray uris = db == null ? null : readAzureAccounts(db);
+            runOnUiThread(() -> {
+                if (uris == null || uris.length() == 0) {
+                    toast("读不到 Microsoft Authenticator 数据：" + Capabilities.lastDiagnostic);
+                } else {
+                    applySnapshotBatch(target, uris);
+                }
+            });
+        }).start();
+    }
+
+    /**
+     * Reads OATH accounts out of the copied PhoneFactor database and returns ready-made otpauth
+     * URIs. {@code oath_secret_key} is Base64 of the raw HMAC key; re-encode as base32 so the rest
+     * of TOTPull sees the same shape as every other importer.
+     *
+     * <p>Microsoft's software OATH tokens are TOTP/SHA1 with an 8-digit code, so we pin those
+     * parameters here instead of relying on the otpauth defaults.
+     */
+    private org.json.JSONArray readAzureAccounts(File db) {
+        org.json.JSONArray out = new org.json.JSONArray();
+        SQLiteDatabase sql = null;
+        Cursor c = null;
+        try {
+            sql = SQLiteDatabase.openDatabase(db.getPath(), null, SQLiteDatabase.OPEN_READONLY);
+            c = sql.rawQuery("SELECT username, oath_secret_key FROM accounts "
+                    + "WHERE oath_enabled=1 AND oath_secret_key <> ''", null);
+            int userIdx = c.getColumnIndex("username");
+            int keyIdx = c.getColumnIndex("oath_secret_key");
+            while (c.moveToNext()) {
+                byte[] raw = TotpGenerator.base64Decode(c.getString(keyIdx));
+                if (raw.length < 10) {
+                    continue;
+                }
+                String secret = TotpGenerator.base32Encode(raw);
+                String username = userIdx >= 0 ? c.getString(userIdx) : "";
+                String uri = "otpauth://totp/Microsoft:" + android.net.Uri.encode(username)
+                        + "?secret=" + secret + "&issuer=Microsoft"
+                        + "&digits=8&period=30&algorithm=SHA1";
+                out.put(uri);
+            }
+        } catch (Exception e) {
+            return null;
+        } finally {
+            if (c != null) {
+                c.close();
+            }
+            if (sql != null) {
+                sql.close();
+            }
+        }
+        return out;
     }
 
     /** Turns the module's snapshot into entries. Returns false when it carried nothing usable. */

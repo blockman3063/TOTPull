@@ -35,6 +35,7 @@ public class MainHook extends XposedModule {
     private static final String STEAM = "com.valvesoftware.android.steam.community";
     private static final String GA = "com.google.android.apps.authenticator2";
     private static final String AEGIS = "com.beemdevelopment.aegis";
+    private static final String AZURE = "com.azure.authenticator";
 
     /** R8 name of Riot's androidx.security SharedPreferences wrapper. */
     private static final String RIOT_WRAPPER = "y43";
@@ -50,7 +51,8 @@ public class MainHook extends XposedModule {
     @Override
     public void onPackageReady(PackageReadyParam param) {
         String pkg = param.getPackageName();
-        if (!RIOT.equals(pkg) && !STEAM.equals(pkg) && !GA.equals(pkg) && !AEGIS.equals(pkg)) {
+        if (!RIOT.equals(pkg) && !STEAM.equals(pkg) && !GA.equals(pkg)
+                && !AEGIS.equals(pkg) && !AZURE.equals(pkg)) {
             return;
         }
         _package = pkg;
@@ -204,6 +206,7 @@ public class MainHook extends XposedModule {
         if (STEAM.equals(pkg)) return "Steam";
         if (GA.equals(pkg)) return "谷歌验证器";
         if (AEGIS.equals(pkg)) return "Aegis";
+        if (AZURE.equals(pkg)) return "Microsoft Authenticator";
         return pkg;
     }
 

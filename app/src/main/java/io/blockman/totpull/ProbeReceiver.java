@@ -61,6 +61,7 @@ public class ProbeReceiver extends BroadcastReceiver {
             "com.valvesoftware.android.steam.community",
             "com.google.android.apps.authenticator2",
             "com.beemdevelopment.aegis",
+            "com.azure.authenticator",
     };
 
     @Override
