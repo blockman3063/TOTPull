@@ -17,6 +17,7 @@ import android.view.View;
 import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.ListView;
+import android.widget.PopupMenu;
 import android.widget.RadioButton;
 import android.widget.RadioGroup;
 import android.widget.TextView;
@@ -155,6 +156,7 @@ public class MainActivity extends AppCompatActivity {
         // One-off repair of legacy Google Authenticator secrets, before the list is built.
         _store.migrateCanonicalSecrets();
         _adapter = new EntryAdapter(this, _entries);
+        _adapter.setOnEntryMenuListener(this::showEntryMenu);
 
         _listView = findViewById(R.id.list);
         _emptyView = findViewById(R.id.empty);
@@ -611,6 +613,26 @@ public class MainActivity extends AppCompatActivity {
         _store.save(current);
         reload();
         toast(getString(R.string.imported, 1));
+    }
+
+    /** The three-dot button on a code card: copy it or jump into the editor. */
+    private void showEntryMenu(TotpEntry entry, View anchor) {
+        PopupMenu menu = new PopupMenu(this, anchor);
+        menu.getMenu().add(getString(R.string.entry_menu_copy));
+        menu.getMenu().add(getString(R.string.entry_menu_edit));
+        menu.setOnMenuItemClickListener(item -> {
+            String title = item.getTitle().toString();
+            if (title.equals(getString(R.string.entry_menu_copy))) {
+                onEntryClicked(entry);
+                return true;
+            }
+            if (title.equals(getString(R.string.entry_menu_edit))) {
+                openEditor(entry.id);
+                return true;
+            }
+            return false;
+        });
+        menu.show();
     }
 
     private void onEntryClicked(TotpEntry entry) {

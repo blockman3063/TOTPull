@@ -23,6 +23,9 @@
     <string name="import_aegis_unsupported">不支持的 Aegis 备份版本</string>
     <string name="action_add">添加</string>
     <string name="copied">已复制 %1$s</string>
+    <string name="entry_menu_desc">条目操作菜单</string>
+    <string name="entry_menu_copy">复制验证码</string>
+    <string name="entry_menu_edit">编辑条目</string>
     <string name="nothing_in_clipboard">剪贴板里没有 otpauth 链接</string>
     <string name="imported">导入了 %1$d 条</string>
     <string name="bad_uri">无法解析这条链接</string>

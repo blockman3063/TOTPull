@@ -43,6 +43,17 @@ public class EntryAdapter extends BaseAdapter {
     // Group keys (sourcePackage) the user has folded. Persistent across rebuilds/filters.
     private final Set<String> _collapsed = new HashSet<>();
 
+    /** Receives the three-dot button tap; the activity shows the popup and handles actions. */
+    public interface OnEntryMenuListener {
+        void onEntryMenu(TotpEntry entry, View anchor);
+    }
+
+    private OnEntryMenuListener _menuListener;
+
+    public void setOnEntryMenuListener(OnEntryMenuListener listener) {
+        _menuListener = listener;
+    }
+
     public EntryAdapter(Context context, List<TotpEntry> entries) {
         _context = context;
         _entries = entries;
@@ -243,11 +254,20 @@ public class EntryAdapter extends BaseAdapter {
             holder.account = view.findViewById(R.id.account);
             holder.meta = view.findViewById(R.id.meta);
             holder.code = view.findViewById(R.id.code);
+            holder.countdown = view.findViewById(R.id.countdown);
             holder.progress = view.findViewById(R.id.progress);
+            holder.menu = view.findViewById(R.id.entry_menu);
             view.setTag(holder);
         } else {
             holder = (Holder) view.getTag();
         }
+
+        final TotpEntry menuEntry = entry;
+        holder.menu.setOnClickListener(v -> {
+            if (_menuListener != null) {
+                _menuListener.onEntryMenu(menuEntry, v);
+            }
+        });
 
         holder.issuer.setText(entry.displayName());
         String account = entry.displayAccount();
@@ -276,6 +296,7 @@ public class EntryAdapter extends BaseAdapter {
     private void bindCode(Holder holder, TotpEntry entry) {
         if (!entry.isSupported()) {
             holder.code.setText("----");
+            holder.countdown.setVisibility(View.GONE);
             holder.progress.setVisibility(View.GONE);
             return;
         }
@@ -283,10 +304,15 @@ public class EntryAdapter extends BaseAdapter {
         holder.code.setText(code.isEmpty() ? "----" : TotpGenerator.format(code, entry.isSteam()));
 
         if (entry.isHotp()) {
+            // HOTP advances only when used; a clock countdown would be meaningless.
+            holder.countdown.setVisibility(View.GONE);
             holder.progress.setVisibility(View.GONE);
         } else {
+            long now = System.currentTimeMillis();
+            holder.countdown.setVisibility(View.VISIBLE);
+            holder.countdown.setText(String.valueOf(TotpGenerator.secondsLeft(entry.period, now)));
             holder.progress.setVisibility(View.VISIBLE);
-            holder.progress.setProgress(TotpGenerator.progressLeft(entry.period, System.currentTimeMillis()));
+            holder.progress.setProgress(TotpGenerator.progressLeft(entry.period, now));
         }
     }
 
@@ -314,7 +340,9 @@ public class EntryAdapter extends BaseAdapter {
         TextView account;
         TextView meta;
         TextView code;
+        TextView countdown;
         ProgressBar progress;
+        View menu;
     }
 
     /** One source-app bucket. Tapping folds it, long-pressing deletes the whole group. */
