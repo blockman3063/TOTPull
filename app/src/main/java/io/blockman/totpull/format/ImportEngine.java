@@ -5,11 +5,9 @@ import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
 
 import io.blockman.totpull.TotpEntry;
 import io.blockman.totpull.TotpGenerator;
@@ -72,28 +70,28 @@ public final class ImportEngine {
                 result.detectedFormat = "Google Authenticator（迁移链接）";
                 result.entries.addAll(MigrationImporter.parse(t));
                 if (!result.entries.isEmpty()) {
-                    return dedupe(result);
+                    return result;
                 }
             }
 
             if (t.startsWith("{") || t.startsWith("[")) {
                 parseJson(t, result);
                 if (!result.entries.isEmpty()) {
-                    return dedupe(result);
+                    return result;
                 }
             }
 
             if (t.contains("otpauth://") || t.contains("otpauth-migration://")) {
                 parseUriAnywhere(t, result);
                 if (!result.entries.isEmpty()) {
-                    return dedupe(result);
+                    return result;
                 }
             }
 
             if (looksLikeCsv(t)) {
                 parseCsv(t, result);
                 if (!result.entries.isEmpty()) {
-                    return dedupe(result);
+                    return result;
                 }
             }
 
@@ -109,20 +107,8 @@ public final class ImportEngine {
         } catch (Exception e) {
             result.warnings.add(String.valueOf(e.getMessage()));
         }
-        return dedupe(result);
-    }
-
-    /** Drops entries that repeat inside one payload, so a double-pasted URI yields one row. */
-    private static Result dedupe(Result result) {
-        Set<String> seen = new LinkedHashSet<>();
-        List<TotpEntry> unique = new ArrayList<>();
-        for (TotpEntry entry : result.entries) {
-            if (seen.add(entry.key())) {
-                unique.add(entry);
-            }
-        }
-        result.entries.clear();
-        result.entries.addAll(unique);
+        // Repeated secrets are intentionally preserved. Consolidating duplicates is an
+        // explicit maintenance operation, not something parsing decides on the user's behalf.
         return result;
     }
 

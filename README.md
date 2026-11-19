@@ -48,6 +48,8 @@ Entries are grouped by source app. Tap a group header to fold or unfold it (the 
 
 The search box matches issuer, name, group, notes and source. The filter dialog offers source and type pickers built from the entries actually in the vault; search and both dimensions AND together. Filtering happens in the list adapter only — the vault is never touched. The subtitle switches to `显示 X / Y 条` while a filter is active.
 
+Imports never de-duplicate: the same secret can exist many times in the vault, whether it came from a file, a share, the clipboard or a source-app probe. Merging twins is a separate, deliberate maintenance operation rather than something an import decides silently.
+
 Tap a code to copy it; long-press an entry to edit or delete it.
 
 ## Other imports

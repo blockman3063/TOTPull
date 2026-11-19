@@ -119,7 +119,8 @@ public class ProbeReceiver extends BroadcastReceiver {
             entry.note = note;
         }
 
-        boolean duplicate;
+        // Duplicates are kept: the user cleans them up explicitly in the manager later.
+        boolean duplicate = false;
         try {
             TotpStore store = new TotpStore(context);
             List<TotpEntry> all = store.load();
@@ -131,20 +132,11 @@ public class ProbeReceiver extends BroadcastReceiver {
                         context.getString(R.string.probe_vault_unreadable), false);
                 return;
             }
-            duplicate = false;
-            for (TotpEntry existing : all) {
-                if (existing.key().equals(entry.key())) {
-                    duplicate = true;
-                    break;
-                }
-            }
-            if (!duplicate) {
-                all.add(entry);
-                if (!store.save(all)) {
-                    writeReport(context, false, null, null,
-                            context.getString(R.string.probe_save_failed), false);
-                    return;
-                }
+            all.add(entry);
+            if (!store.save(all)) {
+                writeReport(context, false, null, null,
+                        context.getString(R.string.probe_save_failed), false);
+                return;
             }
         } catch (Throwable t) {
             Log.w(TAG, "save failed", t);
@@ -206,20 +198,9 @@ public class ProbeReceiver extends BroadcastReceiver {
                         context.getString(R.string.probe_vault_unreadable), false);
                 return;
             }
-            int added = 0;
-            for (TotpEntry candidate : incoming) {
-                boolean known = false;
-                for (TotpEntry existing : all) {
-                    if (existing.key().equals(candidate.key())) {
-                        known = true;
-                        break;
-                    }
-                }
-                if (!known) {
-                    all.add(candidate);
-                    added++;
-                }
-            }
+            // Keep every row from every answer, even identical secrets.
+            int added = incoming.size();
+            all.addAll(incoming);
             if (added > 0 && !store.save(all)) {
                 writeReport(context, false, null, null,
                         context.getString(R.string.probe_save_failed), false);

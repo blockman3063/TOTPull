@@ -78,6 +78,7 @@ public class MainActivity extends AppCompatActivity {
             new ExtractTarget("com.riotgames.mobile.leagueconnect", "Riot Mobile"),
             new ExtractTarget("com.valvesoftware.android.steam.community", "Steam"),
             new ExtractTarget("com.google.android.apps.authenticator2", "谷歌验证器"),
+            new ExtractTarget("com.beemdevelopment.aegis", "Aegis"),
     };
 
     static final class ExtractTarget {
@@ -577,12 +578,6 @@ public class MainActivity extends AppCompatActivity {
 
     private void addEntry(TotpEntry entry) {
         List<TotpEntry> current = _store.load();
-        for (TotpEntry existing : current) {
-            if (existing.key().equals(entry.key())) {
-                toast(getString(R.string.duplicate));
-                return;
-            }
-        }
 
         // An entry the user added by hand earlier can be the same code we just pulled from an
         // app. Adopt the source metadata onto the existing row instead of creating a twin: their
@@ -767,7 +762,7 @@ public class MainActivity extends AppCompatActivity {
         if (Capabilities.hasRoot(this)) {
             // Reading the body settles both questions at once: is there a snapshot, and can we
             // actually get at it. A separate existence check would just be a second su round trip.
-            setModuleReady(Capabilities.readSnapshot(this) != null);
+            setModuleReady(Capabilities.readSnapshot(this, Capabilities.RIOT_PACKAGE) != null);
         }
     }
 
@@ -837,6 +832,29 @@ public class MainActivity extends AppCompatActivity {
     private void startProbe(ExtractTarget target) {
         if (!isInstalled(target.packageName)) {
             toast(getString(R.string.probe_not_installed, target.label));
+            return;
+        }
+        if ("com.beemdevelopment.aegis".equals(target.packageName)) {
+            // Aegis files are readable through root transport, but root state may have been cached
+            // before the user granted KernelSU/Magisk. Re-check on demand instead of trusting a
+            // stale "denied" value. Do the blocking su probe off the main thread.
+            new Thread(() -> {
+                int rootState = Capabilities.detectRoot(this);
+                if (rootState != Capabilities.ROOT_GRANTED) {
+                    runOnUiThread(() -> toast(rootState == Capabilities.ROOT_TIMEOUT
+                            ? "root 检测超时，请在授权管理器里允许 TOTPull 后重试"
+                            : "读 Aegis 需要 root；没有 root 请用文件导入"));
+                    return;
+                }
+                String vault = Capabilities.readAegisVault();
+                runOnUiThread(() -> {
+                    if (vault == null) {
+                        toast("读不到 Aegis vault：" + Capabilities.lastDiagnostic);
+                    } else {
+                        askAegisPassword(vault);   // 复用你之前做的密码框→解密→入库
+                    }
+                });
+            }).start();
             return;
         }
         if (_pendingProbe != null) {
@@ -926,20 +944,10 @@ public class MainActivity extends AppCompatActivity {
             toast(getString(R.string.probe_vault_unreadable));
             return false;
         }
-        int added = 0;
-        for (TotpEntry candidate : incoming) {
-            boolean known = false;
-            for (TotpEntry existing : all) {
-                if (existing.key().equals(candidate.key())) {
-                    known = true;
-                    break;
-                }
-            }
-            if (!known) {
-                all.add(candidate);
-                added++;
-            }
-        }
+        // Keep every answer as a separate row. De-duplication is a deliberate maintenance
+        // action in the manager, never something an import does silently.
+        int added = incoming.size();
+        all.addAll(incoming);
         if (added > 0 && !_store.save(all)) {
             toast(getString(R.string.probe_save_failed));
             return false;
@@ -1116,25 +1124,10 @@ public class MainActivity extends AppCompatActivity {
         }
 
         List<TotpEntry> current = _store.load();
-        int added = 0;
-        for (TotpEntry entry : result.entries) {
-            boolean duplicate = false;
-            for (TotpEntry existing : current) {
-                if (existing.key().equals(entry.key())) {
-                    duplicate = true;
-                    break;
-                }
-            }
-            if (!duplicate) {
-                current.add(entry);
-                added++;
-            }
-        }
-
-        if (added == 0) {
-            toast(getString(R.string.duplicate));
-            return;
-        }
+        // Duplicate secrets are allowed to coexist. Cleaning them up is a separate,
+        // explicit operation - importing must not silently drop rows.
+        int added = result.entries.size();
+        current.addAll(result.entries);
         _store.save(current);
         reload();
 

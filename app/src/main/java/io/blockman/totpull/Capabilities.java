@@ -70,6 +70,12 @@ public final class Capabilities {
         return context.getApplicationContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE);
     }
 
+    private static String brief(String text, int max) {
+        if (text == null) return "";
+        String value = text.trim();
+        return value.length() <= max ? value : value.substring(0, max) + "…";
+    }
+
     public static boolean isSetupDone(Context context) {
         return prefs(context).getBoolean(KEY_SETUP_DONE, false);
     }
@@ -136,7 +142,7 @@ public final class Capabilities {
     public static int detectRoot(Context context) {
         String su = findSu();
         if (su == null) {
-            prefs(context).edit().putInt(KEY_ROOT, ROOT_DENIED).apply();
+            prefs(context).edit().putInt(KEY_ROOT, ROOT_DENIED).commit();
             return ROOT_DENIED;
         }
 
@@ -150,7 +156,7 @@ public final class Capabilities {
         } else {
             state = ROOT_DENIED;
         }
-        prefs(context).edit().putInt(KEY_ROOT, state).apply();
+        prefs(context).edit().putInt(KEY_ROOT, state).commit();
         return state;
     }
 
@@ -176,10 +182,6 @@ public final class Capabilities {
         return null;
     }
 
-    /**
-     * Reads the module's snapshot straight out of the source app's private storage. Returns null
-     * when root is unavailable, the file is missing, or the read failed.
-     */
     /**
      * Prefixes under which the snapshot may be reachable.
      *
@@ -216,17 +218,35 @@ public final class Capabilities {
         lastDiagnostic = attempts.toString().trim();
         return null;
     }
-
-    /** Convenience for the passive "is the module alive" check, which only needs any snapshot. */
-    public static String readSnapshot(Context context) {
-        return readSnapshot(context, RIOT_PACKAGE);
+    public static String readAegisVault() {
+        StringBuilder attempts = new StringBuilder();
+        for (String prefix : DATA_PREFIXES) {
+            String path = prefix + "com.beemdevelopment.aegis/files/aegis.json";
+            Shell result = su("cat " + path, 8000);
+            if (result == null) {
+                lastDiagnostic = "su 没有响应（超时）";
+                return null;
+            }
+            String detail = brief(result.output, 200);
+            attempts.append(path).append(": exit=").append(result.exitCode);
+            if (!detail.isEmpty()) {
+                attempts.append(" out=").append(detail);
+            }
+            attempts.append('\n');
+            if (result.exitCode == 0 && !result.output.trim().isEmpty()) {
+                lastDiagnostic = "";
+                return result.output.trim();   // 这就是加密 vault JSON
+            }
+        }
+        lastDiagnostic = attempts.toString().trim();
+        return null;
     }
 
     /** Last reason a snapshot read failed, surfaced in the capability sheet for diagnosis. */
     public static volatile String lastDiagnostic = "";
 
     public static boolean snapshotExists(Context context) {
-        return readSnapshot(context) != null;
+        return readSnapshot(context, RIOT_PACKAGE) != null;
     }
 
     // ------------------------------------------------------------------ process plumbing
@@ -251,7 +271,10 @@ public final class Capabilities {
         if (su == null) {
             return null;
         }
-        return exec(su, command, timeoutMs);
+        // App processes live in their own mount namespace, so /data/data only contains the
+        // calling app. -M (Magisk/KernelSU "mount master") puts the shell in the global namespace
+        // where every app's private files are visible.
+        return exec(su, new String[]{"-M", "-c", command}, timeoutMs);
     }
 
     /**
@@ -261,9 +284,16 @@ public final class Capabilities {
      * to tell "it said no" apart from "it never said anything".
      */
     public static Shell exec(String binary, String command, int timeoutMs) {
+        return exec(binary, new String[]{"-c", command}, timeoutMs);
+    }
+
+    public static Shell exec(String binary, String[] args, int timeoutMs) {
         Process process = null;
         try {
-            process = new ProcessBuilder(binary, "-c", command)
+            String[] argv = new String[args.length + 1];
+            argv[0] = binary;
+            System.arraycopy(args, 0, argv, 1, args.length);
+            process = new ProcessBuilder(argv)
                     .redirectErrorStream(true)
                     .start();
             final Process running = process;

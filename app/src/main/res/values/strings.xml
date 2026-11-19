@@ -25,7 +25,6 @@
     <string name="copied">已复制 %1$s</string>
     <string name="nothing_in_clipboard">剪贴板里没有 otpauth 链接</string>
     <string name="imported">导入了 %1$d 条</string>
-    <string name="duplicate">这条已经存在了</string>
     <string name="bad_uri">无法解析这条链接</string>
 
     <string name="delete">删除</string>
