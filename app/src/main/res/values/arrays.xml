@@ -10,5 +10,6 @@
         <item>com.riotgames.mobile.leagueconnect</item>
         <item>com.valvesoftware.android.steam.community</item>
         <item>com.google.android.apps.authenticator2</item>
+        <item>com.beemdevelopment.aegis</item>
     </string-array>
 </resources>

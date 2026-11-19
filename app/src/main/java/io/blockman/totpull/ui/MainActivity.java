@@ -74,11 +74,13 @@ public class MainActivity extends AppCompatActivity {
      * Apps we know how to pull codes out of. Each entry needs a matching extractor on the module
      * side; the module answers with a ready-made otpauth URI so this side stays format-agnostic.
      */
+    private static final String AEGIS_PACKAGE = "com.beemdevelopment.aegis";
+
     static final ExtractTarget[] EXTRACT_TARGETS = {
             new ExtractTarget("com.riotgames.mobile.leagueconnect", "Riot Mobile"),
             new ExtractTarget("com.valvesoftware.android.steam.community", "Steam"),
             new ExtractTarget("com.google.android.apps.authenticator2", "谷歌验证器"),
-            new ExtractTarget("com.beemdevelopment.aegis", "Aegis"),
+            new ExtractTarget(AEGIS_PACKAGE, "Aegis"),
     };
 
     static final class ExtractTarget {
@@ -834,27 +836,8 @@ public class MainActivity extends AppCompatActivity {
             toast(getString(R.string.probe_not_installed, target.label));
             return;
         }
-        if ("com.beemdevelopment.aegis".equals(target.packageName)) {
-            // Aegis files are readable through root transport, but root state may have been cached
-            // before the user granted KernelSU/Magisk. Re-check on demand instead of trusting a
-            // stale "denied" value. Do the blocking su probe off the main thread.
-            new Thread(() -> {
-                int rootState = Capabilities.detectRoot(this);
-                if (rootState != Capabilities.ROOT_GRANTED) {
-                    runOnUiThread(() -> toast(rootState == Capabilities.ROOT_TIMEOUT
-                            ? "root 检测超时，请在授权管理器里允许 TOTPull 后重试"
-                            : "读 Aegis 需要 root；没有 root 请用文件导入"));
-                    return;
-                }
-                String vault = Capabilities.readAegisVault();
-                runOnUiThread(() -> {
-                    if (vault == null) {
-                        toast("读不到 Aegis vault：" + Capabilities.lastDiagnostic);
-                    } else {
-                        askAegisPassword(vault);   // 复用你之前做的密码框→解密→入库
-                    }
-                });
-            }).start();
+        if (AEGIS_PACKAGE.equals(target.packageName)) {
+            showAegisRouteDialog(target);
             return;
         }
         if (_pendingProbe != null) {
@@ -879,6 +862,45 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
         probeViaBroadcast(target);
+    }
+
+    /** Aegis has two valid transports: the unlocked in-memory vault, or the encrypted file. */
+    private void showAegisRouteDialog(ExtractTarget target) {
+        new MaterialAlertDialogBuilder(this)
+                .setTitle("Aegis 导入方式")
+                .setItems(new String[]{
+                        "模块直读（无需密码，需先解锁 Aegis）",
+                        "Root 读文件（输入备份密码）",
+                }, (dialog, which) -> {
+                    if (which == 0) {
+                        probeViaBroadcast(target);
+                    } else {
+                        readAegisByRoot(target);
+                    }
+                })
+                .show();
+    }
+
+    private void readAegisByRoot(ExtractTarget target) {
+        // Root state may have been cached before KernelSU/Magisk granted us. Re-check on demand
+        // instead of trusting a stale "denied" value. Do the blocking su probe off the UI thread.
+        new Thread(() -> {
+            int rootState = Capabilities.detectRoot(this);
+            if (rootState != Capabilities.ROOT_GRANTED) {
+                runOnUiThread(() -> toast(rootState == Capabilities.ROOT_TIMEOUT
+                        ? "root 检测超时，请在授权管理器里允许 TOTPull 后重试"
+                        : "读 Aegis 需要 root；没有 root 请用文件导入"));
+                return;
+            }
+            String vault = Capabilities.readAegisVault();
+            runOnUiThread(() -> {
+                if (vault == null) {
+                    toast("读不到 Aegis vault：" + Capabilities.lastDiagnostic);
+                } else {
+                    askAegisPassword(vault);
+                }
+            });
+        }).start();
     }
 
     /** Turns the module's snapshot into entries. Returns false when it carried nothing usable. */

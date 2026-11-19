@@ -60,6 +60,7 @@ public class ProbeReceiver extends BroadcastReceiver {
             "com.riotgames.mobile.leagueconnect",
             "com.valvesoftware.android.steam.community",
             "com.google.android.apps.authenticator2",
+            "com.beemdevelopment.aegis",
     };
 
     @Override
@@ -82,13 +83,22 @@ public class ProbeReceiver extends BroadcastReceiver {
             return;
         }
 
-        // A failed answer may come from a cloned copy that simply has no seed. Keep the round
-        // open so a sibling process still has a chance to answer.
+        // A failed answer may come from the module before the source app has unlocked its store.
+        // Keep the round open so a later retry still has a chance to answer.
         if (!intent.getBooleanExtra("ok", false)) {
             String error = intent.getStringExtra("error");
             if (error != null && !error.isEmpty()) {
                 writeReport(context, false, null, null, error, false);
             }
+            return;
+        }
+
+        // The module announces readiness several times (startup retries plus Aegis onResume),
+        // so one import can produce several successful answers that are already queued on the
+        // main thread. The first one closes the round; every later answer must be dropped or it
+        // would add another full copy of the same batch.
+        if (pendingSince(context) <= 0L) {
+            Log.i(TAG, "successful answer ignored, round already closed");
             return;
         }
 

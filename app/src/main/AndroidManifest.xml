@@ -17,6 +17,7 @@
 
     <application
         android:allowBackup="false"
+        android:description="@string/xposed_desc"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -90,19 +91,6 @@
                 <action android:name="io.blockman.totpull.action.READY" />
             </intent-filter>
         </receiver>
-
-        <meta-data
-            android:name="xposedmodule"
-            android:value="true" />
-        <meta-data
-            android:name="xposeddescription"
-            android:value="@string/xposed_desc" />
-        <meta-data
-            android:name="xposedminversion"
-            android:value="93" />
-        <meta-data
-            android:name="xposedscope"
-            android:resource="@array/xposedscope" />
 
     </application>
 
