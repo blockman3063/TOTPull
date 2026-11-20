@@ -69,7 +69,11 @@ import io.blockman.totpull.R
 import io.blockman.totpull.TotpEntry
 import io.blockman.totpull.TotpGenerator
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withTimeoutOrNull
+import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.platform.LocalDensity
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
 import top.yukonga.miuix.kmp.basic.Text
@@ -130,6 +134,13 @@ private class DragVisualState {
      * placement, whose intermediate offsets must never leak into the drag math.
      */
     var baseOffset by mutableFloatStateOf(0f)
+
+    /**
+     * Finger Y in list-container coordinates, updated per pointer event and kept
+     * between events so the auto-scroll loop can keep swapping rows while the finger
+     * rests inside an edge zone. -1 when no drag is active.
+     */
+    var lastFingerY by mutableFloatStateOf(-1f)
 }
 
 private fun rowKey(row: CodesRow): String = when (row) {
@@ -230,6 +241,81 @@ private fun CodesPage() {
             EmptyView(UiBridge.isFiltering())
         } else {
             val haptics = LocalHapticFeedback.current
+
+            // Swap detection shared by the drag handler and the auto-scroll loop: both
+            // feed it a finger Y in container coordinates. Hysteresis: swap only once
+            // the finger crossed the target's center, so hovering a row boundary
+            // cannot flicker back and forth.
+            val checkSwap: (Float) -> Unit = checkSwap@{ y ->
+                val draggedInfo = listState.layoutInfo.visibleItemsInfo
+                    .firstOrNull { it.key == dragVisual.activeKey }
+                    ?: return@checkSwap
+                val targetInfo = listState.layoutInfo.visibleItemsInfo.firstOrNull {
+                    y >= it.offset && y < it.offset + it.size
+                } ?: return@checkSwap
+                if (targetInfo.key == draggedInfo.key) {
+                    return@checkSwap
+                }
+                val target =
+                    (rowsState.value.getOrNull(targetInfo.index) as? EntryRow)
+                        ?.entry ?: return@checkSwap
+                val draggedEntry =
+                    (rowsState.value.getOrNull(draggedInfo.index) as? EntryRow)
+                        ?.entry ?: return@checkSwap
+                val draggedCenter = draggedInfo.offset + draggedInfo.size / 2f
+                val targetCenter = targetInfo.offset + targetInfo.size / 2f
+                val crossed = if (targetCenter > draggedCenter) {
+                    y >= targetCenter
+                } else {
+                    y <= targetCenter
+                }
+                if (crossed &&
+                    (target.sourcePackage ?: "") ==
+                    (draggedEntry.sourcePackage ?: "")
+                ) {
+                    // No anchor compensation here on purpose: the visual position is
+                    // anchored to the finger (baseOffset + dy) and the per-slot
+                    // translation subtracts the item's live offset, so a slot jump
+                    // cancels out at draw time. Adding compensation on top would
+                    // double-correct, and reading the target's offset mid-spring
+                    // would drift.
+                    UiBridge.host?.moveEntry(draggedEntry, target)
+                }
+            }
+
+            // While a drag is active, holding the finger inside an edge band scrolls
+            // the list - faster the deeper into the band the finger is - and keeps
+            // running swap detection, so the card re-orders while the finger rests.
+            val density = LocalDensity.current
+            LaunchedEffect(dragVisual.activeKey) {
+                val edge = with(density) { 56.dp.toPx() }
+                val maxSpeed = with(density) { 16.dp.toPx() }
+                while (dragVisual.activeKey != null && isActive) {
+                    val y = dragVisual.lastFingerY
+                    if (y >= 0f) {
+                        val layout = listState.layoutInfo
+                        val top = layout.viewportStartOffset.toFloat()
+                        val bottom = layout.viewportEndOffset.toFloat()
+                        val delta = when {
+                            y < top + edge -> {
+                                val depth = ((top + edge - y) / edge).coerceIn(0f, 1f)
+                                -maxSpeed * depth
+                            }
+                            y > bottom - edge -> {
+                                val depth = ((y - (bottom - edge)) / edge).coerceIn(0f, 1f)
+                                maxSpeed * depth
+                            }
+                            else -> 0f
+                        }
+                        if (delta != 0f) {
+                            listState.scrollBy(delta)
+                            checkSwap(dragVisual.lastFingerY)
+                        }
+                    }
+                    withFrameNanos { }
+                }
+            }
+
             LazyColumn(
                 state = listState,
                 modifier = Modifier
@@ -252,6 +338,7 @@ private fun CodesPage() {
                                     dragVisual.activeKey = "e:" + row.entry.id
                                     dragVisual.dy = 0f
                                     dragVisual.baseOffset = (info?.offset ?: 0).toFloat()
+                                    dragVisual.lastFingerY = offset.y
                                 }
                             },
                             onDrag = { change, dragAmount ->
@@ -261,48 +348,17 @@ private fun CodesPage() {
                                 }
                                 // Follow offset: pure finger movement, no frame lag.
                                 dragVisual.dy += dragAmount.y
-                                // Swap detection: finger Y against the settled row offsets.
-                                val y = change.position.y
-                                val draggedInfo = listState.layoutInfo.visibleItemsInfo
-                                    .firstOrNull { it.key == dragVisual.activeKey }
-                                    ?: return@detectDragGesturesAfterLongPress
-                                val targetInfo = listState.layoutInfo.visibleItemsInfo.firstOrNull {
-                                    y >= it.offset && y < it.offset + it.size
-                                } ?: return@detectDragGesturesAfterLongPress
-                                val target =
-                                    (rowsState.value.getOrNull(targetInfo.index) as? EntryRow)
-                                        ?.entry ?: return@detectDragGesturesAfterLongPress
-                                val draggedEntry =
-                                    (rowsState.value.getOrNull(draggedInfo.index) as? EntryRow)
-                                        ?.entry ?: return@detectDragGesturesAfterLongPress
-                                // Hysteresis: swap only once the finger crossed the target's
-                                // center, so hovering a row boundary cannot flicker back and forth.
-                                val draggedCenter = draggedInfo.offset + draggedInfo.size / 2f
-                                val targetCenter = targetInfo.offset + targetInfo.size / 2f
-                                val crossed = if (targetCenter > draggedCenter) {
-                                    y >= targetCenter
-                                } else {
-                                    y <= targetCenter
-                                }
-                                if (targetInfo.key != draggedInfo.key && crossed &&
-                                    (target.sourcePackage ?: "") ==
-                                    (draggedEntry.sourcePackage ?: "")
-                                ) {
-                                    // No anchor compensation here on purpose: the visual
-                                    // position is anchored to the finger (baseOffset + dy)
-                                    // and the per-slot translation subtracts the item's live
-                                    // offset, so a slot jump cancels out at draw time. Adding
-                                    // compensation on top would double-correct, and reading
-                                    // the target's offset mid-spring would drift.
-                                    UiBridge.host?.moveEntry(draggedEntry, target)
-                                }
+                                dragVisual.lastFingerY = change.position.y
+                                checkSwap(change.position.y)
                             },
                             onDragEnd = {
                                 dragVisual.activeKey = null
+                                dragVisual.lastFingerY = -1f
                                 UiBridge.host?.persistOrder()
                             },
                             onDragCancel = {
                                 dragVisual.activeKey = null
+                                dragVisual.lastFingerY = -1f
                                 UiBridge.host?.persistOrder()
                             }
                         )
