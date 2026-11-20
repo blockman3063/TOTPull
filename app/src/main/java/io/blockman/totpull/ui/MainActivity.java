@@ -329,6 +329,10 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
     protected void onResume() {
         super.onResume();
 
+        // Sub-activities (group editor, entry editor) may have changed the vault; the
+        // in-memory list must be re-read or the list keeps showing stale rows.
+        reload();
+
         // The answer is delivered to ProbeReceiver, possibly while this activity was not running.
         // Show whatever came back as soon as we are back in front of the user.
         showProbeReport();
