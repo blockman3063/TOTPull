@@ -49,6 +49,19 @@ Aegis also offers two transports, and unlike Microsoft's both have prerequisites
 - **Deep link** — sends `otpauth-migration://offline?data=…` intents through the system app chooser straight into another validator's import flow. Google's migration protobuf carries at most ten entries per link, so the vault is batched and you pick a batch first. The field numbering follows Google's official schema: `1 secret, 2 name, 3 issuer, 4 algorithm, 5 digits(SIX=1/EIGHT=2), 6 type(HOTP=1/TOTP=2), 7 counter`. Be aware of the ecosystem reality: almost no validator registers a handler for the migration scheme — Google Authenticator and Aegis only read it as QR codes, and TOTPull itself is in the list as a round-trip target.
 - **Google 验证器二维码** — the same migration payloads rendered as QR codes, ten entries per page, scanned by Google Authenticator's import screen.
 - **发送到验证器** (single entry, three-bar menu) — one `otpauth://` deep link handed to the validator of your choice via the system chooser. Validators that never registered the deep-link schemes (notably Google Authenticator) will not appear; use the QR export for those.
+
+### Steam entries and the deeplink mess
+
+Steam's 5-character code type has no standard otpauth representation, and every
+validator speaks a different dialect:
+
+- `otpauth://steam/...` — what TOTPull exports; understood by Stratum (Authenticator Pro) and TOTPull itself. Bitwarden's parser ignores this host, so it never appears in the chooser.
+- `otpauth://totp/Steam:...&issuer=Steam` — the common convention (Aegis exports this), but Bitwarden imports it **wrong**: the generated code comes out numeric instead of Steam's alphanumeric 5-character set (unfixed as of 2026-06, steamguard-cli#468). KeePassXC/gopass additionally want an `encoder=steam` parameter Bitwarden ignores.
+- `steam://SECRET` — Bitwarden's only correct Steam entry point; a hand-typed prefix in its key field, **not** a deeplink scheme.
+
+So for Steam entries the three-bar menu offers **复制 Bitwarden 密钥**: it puts
+`steam://<secret>` on the clipboard for pasting into Bitwarden's authenticator
+key field. The deep-link item still works for Stratum-style validators.
 - **扫码导入** (+ menu) — the in-app camera scanner reads single `otpauth://` QR codes and Google migration QR codes (ten-entry batches included), so you can pull entries in from any validator that exports them as images without file or clipboard round-trips.
 
 ## Storage
