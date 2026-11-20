@@ -2,7 +2,8 @@
 <resources>
     <!-- 浅灰底 + 纯白卡片，接近 LSPosed / ColorDuo 的信息页观感 -->
     <color name="bg">#F2F2F7</color>
-    <color name="card">#FFFFFF</color>
+    <!-- 与验证码页卡片色调一致：中性微冷面（cardTint 浅色 hsl(215,30%,98%)） -->
+    <color name="card">#F8FAFB</color>
     <color name="card_inset">#F7F7FA</color>
     <color name="text_primary">#111114</color>
     <color name="text_secondary">#8A8A8F</color>

@@ -5,7 +5,8 @@
       而是回落到浅色值（白底卡片、浅色状态卡），在深色下会直接糊脸。
     -->
     <color name="bg">#0F0F12</color>
-    <color name="card">#1B1B1F</color>
+    <!-- 与验证码页卡片色调一致：cardTint 深色 hsl(215,14%,16%) -->
+    <color name="card">#23282F</color>
     <color name="card_inset">#242429</color>
     <color name="text_primary">#F3F3F7</color>
     <color name="text_secondary">#9C9CA4</color>
