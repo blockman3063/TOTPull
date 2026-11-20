@@ -55,6 +55,11 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.draw.alpha
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
@@ -119,30 +124,6 @@ private fun groupDot(hue: Float, dark: Boolean): Color {
  * relative to the handle itself: since the handle travels with the card, a slot change cancels
  * out of the delta automatically - no cross-generation coordinate conversion left to jitter.
  */
-private class DragVisualState {
-    var activeKey by mutableStateOf<String?>(null)
-
-    /** Accumulated finger movement relative to the grab point. */
-    var dy by mutableFloatStateOf(0f)
-
-    /**
-     * The dragged item's slot offset at grab time. The card's visual position is
-     * [baseOffset] + [dy] in list coordinates (grab point plus finger travel); the
-     * drawing code converts that to a per-slot translationY by subtracting the item's
-     * CURRENT slot offset. This keeps the card glued to the finger no matter how the
-     * slots rearrange - including while sibling rows are still animating their spring
-     * placement, whose intermediate offsets must never leak into the drag math.
-     */
-    var baseOffset by mutableFloatStateOf(0f)
-
-    /**
-     * Finger Y in list-container coordinates, updated per pointer event and kept
-     * between events so the auto-scroll loop can keep swapping rows while the finger
-     * rests inside an edge zone. -1 when no drag is active.
-     */
-    var lastFingerY by mutableFloatStateOf(-1f)
-}
-
 private fun rowKey(row: CodesRow): String = when (row) {
     is HeaderRow -> "h:" + row.key
     is EntryRow -> "e:" + row.entry.id
@@ -173,20 +154,78 @@ fun MainScreen() {
         UiBridge.host?.onTabChanged(tab)
     }
 
-    Column(
+    // The long-press drag gesture lives on the ROOT, not on the LazyColumn: hit-testing
+    // ends at the list's bounds, so a finger that wanders onto the bottom bar or past
+    // the viewport used to starve the gesture and drop the card mid-drag. From the root,
+    // every touch anywhere lands in the hit chain and the drag survives.
+    Box(
         Modifier
             .fillMaxSize()
-            .background(MiuixTheme.colorScheme.background)
-    ) {
-        Box(Modifier.weight(1f).fillMaxWidth()) {
-            if (tab == 0) {
-                CodesPage()
-                AddFab(Modifier.align(Alignment.BottomEnd).padding(20.dp))
-            } else {
-                InfoPageHost()
+            .pointerInput(Unit) {
+                detectDragGesturesAfterLongPress(
+                    onDragStart = { offset ->
+                        UiBridge.drag.probe(offset.x, offset.y)
+                    },
+                    onDrag = { change, dragAmount ->
+                        change.consume()
+                        UiBridge.drag.moved(dragAmount.y, change.position.y)
+                    },
+                    onDragEnd = { UiBridge.drag.finish() },
+                    onDragCancel = { UiBridge.drag.finish() }
+                )
             }
+    ) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .background(MiuixTheme.colorScheme.background)
+        ) {
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                if (tab == 0) {
+                    CodesPage()
+                    AddFab(Modifier.align(Alignment.BottomEnd).padding(20.dp))
+                } else {
+                    InfoPageHost()
+                }
+            }
+            BottomNav(selected = tab) { UiBridge.showTab(it) }
         }
-        BottomNav(selected = tab) { UiBridge.showTab(it) }
+
+        // The dragged card floats here - above the bottom bar and outside the list's
+        // clip, so it stays visible wherever the finger goes.
+        DragOverlay()
+    }
+}
+
+@Composable
+private fun DragOverlay() {
+    val drag = UiBridge.drag
+    val entry = drag.overlayEntry ?: return
+
+    // Own countdown clock: the overlay lives outside CodesPage's ticker and only
+    // exists for a few seconds per drag.
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(500)
+            now = System.currentTimeMillis()
+        }
+    }
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .offset { IntOffset(0, (drag.containerTopInRoot + drag.baseOffset + drag.dy).roundToInt()) }
+            // No pointer modifiers here on purpose: touch passes straight through to
+            // the gesture root underneath.
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .padding(start = 14.dp, end = 14.dp, top = 4.dp)
+        ) {
+            EntryCard(entry, now, drag, drag.overlayHue, isFloating = true)
+        }
     }
 }
 
@@ -219,7 +258,9 @@ private fun CodesPage() {
     }
 
     val listState = rememberLazyListState()
-    val dragVisual = remember { DragVisualState() }
+    val dragVisual = UiBridge.drag
+    val density = LocalDensity.current
+    val handleZone = with(density) { 58.dp.toPx() }
 
     Column(Modifier.fillMaxSize()) {
         Text(
@@ -243,14 +284,21 @@ private fun CodesPage() {
             val haptics = LocalHapticFeedback.current
 
             // Swap detection shared by the drag handler and the auto-scroll loop: both
-            // feed it a finger Y in container coordinates. Hysteresis: swap only once
-            // the finger crossed the target's center, so hovering a row boundary
-            // cannot flicker back and forth.
-            val checkSwap: (Float) -> Unit = checkSwap@{ y ->
-                val draggedInfo = listState.layoutInfo.visibleItemsInfo
+            // feed it a finger Y in container coordinates. Finger Y outside the viewport
+            // (on the bottom bar, in the header area) is clamped to the nearest edge, so
+            // the drag behaves as if the finger pressed at the edge and never breaks.
+            // Hysteresis: swap only once the finger crossed the target's center, so
+            // hovering a row boundary cannot flicker back and forth.
+            val checkSwap: (Float) -> Unit = checkSwap@{ rawY ->
+                val layout = listState.layoutInfo
+                val y = rawY.coerceIn(
+                    layout.viewportStartOffset.toFloat(),
+                    layout.viewportEndOffset.toFloat() - 1f
+                )
+                val draggedInfo = layout.visibleItemsInfo
                     .firstOrNull { it.key == dragVisual.activeKey }
                     ?: return@checkSwap
-                val targetInfo = listState.layoutInfo.visibleItemsInfo.firstOrNull {
+                val targetInfo = layout.visibleItemsInfo.firstOrNull {
                     y >= it.offset && y < it.offset + it.size
                 } ?: return@checkSwap
                 if (targetInfo.key == draggedInfo.key) {
@@ -274,11 +322,10 @@ private fun CodesPage() {
                     (draggedEntry.sourcePackage ?: "")
                 ) {
                     // No anchor compensation here on purpose: the visual position is
-                    // anchored to the finger (baseOffset + dy) and the per-slot
-                    // translation subtracts the item's live offset, so a slot jump
-                    // cancels out at draw time. Adding compensation on top would
-                    // double-correct, and reading the target's offset mid-spring
-                    // would drift.
+                    // anchored to the finger (baseOffset + dy) and the overlay draws at
+                    // that absolute spot, so a slot jump cancels out. Adding compensation
+                    // on top would double-correct, and reading the target's offset
+                    // mid-spring would drift.
                     UiBridge.host?.moveEntry(draggedEntry, target)
                 }
             }
@@ -286,7 +333,6 @@ private fun CodesPage() {
             // While a drag is active, holding the finger inside an edge band scrolls
             // the list - faster the deeper into the band the finger is - and keeps
             // running swap detection, so the card re-orders while the finger rests.
-            val density = LocalDensity.current
             LaunchedEffect(dragVisual.activeKey) {
                 val edge = with(density) { 56.dp.toPx() }
                 val maxSpeed = with(density) { 16.dp.toPx() }
@@ -316,52 +362,57 @@ private fun CodesPage() {
                 }
             }
 
+            // Hand the drag lifecycle to the root-level gesture (MainScreen): it sees
+            // events even when the finger leaves the list bounds, which is what keeps
+            // the drag alive while the finger rides the bottom bar or screen edges.
+            dragVisual.probe = { x, y ->
+                val layout = listState.layoutInfo
+                val listY = y - dragVisual.containerTopInRoot
+                val info = layout.visibleItemsInfo.firstOrNull {
+                    listY >= it.offset && listY < it.offset + it.size
+                }
+                val row = rowsState.value.getOrNull(info?.index ?: -1) as? EntryRow
+                val ok = row != null && x >= layout.viewportSize.width - handleZone
+                if (ok) {
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    dragVisual.activeKey = "e:" + row!!.entry.id
+                    dragVisual.dy = 0f
+                    dragVisual.baseOffset = info!!.offset.toFloat()
+                    dragVisual.lastFingerY = listY
+                    dragVisual.overlayEntry = row.entry
+                    dragVisual.overlayHue = row.hue
+                }
+                ok
+            }
+            dragVisual.moved = { d, y ->
+                if (dragVisual.activeKey != null) {
+                    dragVisual.dy += d
+                    dragVisual.lastFingerY = y - dragVisual.containerTopInRoot
+                    checkSwap(dragVisual.lastFingerY)
+                }
+            }
+            dragVisual.finish = {
+                if (dragVisual.activeKey != null) {
+                    dragVisual.releaseOffset = dragVisual.baseOffset + dragVisual.dy -
+                            dragVisual.slotOffset()
+                }
+                dragVisual.activeKey = null
+                dragVisual.lastFingerY = -1f
+                dragVisual.overlayEntry = null
+                UiBridge.host?.persistOrder()
+            }
+            dragVisual.slotOffset = {
+                val info = listState.layoutInfo.visibleItemsInfo
+                    .firstOrNull { it.key == dragVisual.activeKey }
+                if (info != null) info.offset.toFloat() else dragVisual.baseOffset
+            }
+
             LazyColumn(
                 state = listState,
                 modifier = Modifier
                     .fillMaxSize()
-                    .pointerInput(Unit) {
-                        // The drag handler lives on the LIST CONTAINER, not on the handle node:
-                        // the container never moves, so positionChange is pure finger movement
-                        // no matter how the rows swap around underneath. Hanging it on the
-                        // handle made the deltas include the item's own relocation - teleporting.
-                        detectDragGesturesAfterLongPress(
-                            onDragStart = { offset ->
-                                // Only the three-bar zone of an entry card starts a drag.
-                                val info = listState.layoutInfo.visibleItemsInfo.firstOrNull {
-                                    offset.y >= it.offset && offset.y < it.offset + it.size
-                                }
-                                val row =
-                                    rowsState.value.getOrNull(info?.index ?: -1) as? EntryRow
-                                if (row != null && offset.x >= size.width - 58.dp.toPx()) {
-                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    dragVisual.activeKey = "e:" + row.entry.id
-                                    dragVisual.dy = 0f
-                                    dragVisual.baseOffset = (info?.offset ?: 0).toFloat()
-                                    dragVisual.lastFingerY = offset.y
-                                }
-                            },
-                            onDrag = { change, dragAmount ->
-                                change.consume()
-                                if (dragVisual.activeKey == null) {
-                                    return@detectDragGesturesAfterLongPress
-                                }
-                                // Follow offset: pure finger movement, no frame lag.
-                                dragVisual.dy += dragAmount.y
-                                dragVisual.lastFingerY = change.position.y
-                                checkSwap(change.position.y)
-                            },
-                            onDragEnd = {
-                                dragVisual.activeKey = null
-                                dragVisual.lastFingerY = -1f
-                                UiBridge.host?.persistOrder()
-                            },
-                            onDragCancel = {
-                                dragVisual.activeKey = null
-                                dragVisual.lastFingerY = -1f
-                                UiBridge.host?.persistOrder()
-                            }
-                        )
+                    .onGloballyPositioned { coords ->
+                        dragVisual.containerTopInRoot = coords.positionInRoot().y
                     }
             ) {
                 itemsIndexed(computed, key = { _, row -> rowKey(row) }) { index, row ->
@@ -370,8 +421,8 @@ private fun CodesPage() {
                     Box(
                         Modifier
                             .animateItem(
-                                // The dragged card is positioned by hand (translation follows
-                                // the finger); animating its slot too makes the two fight.
+                                // The dragged card floats in the root-level overlay; its
+                                // in-list twin is invisible but must keep its slot.
                                 placementSpec = if (dragging) {
                                     null
                                 } else {
@@ -391,7 +442,7 @@ private fun CodesPage() {
                     ) {
                         when (row) {
                             is HeaderRow -> GroupHeader(row)
-                            is EntryRow -> EntryCard(row.entry, now, dragVisual, listState, row.hue)
+                            is EntryRow -> EntryCard(row.entry, now, dragVisual, row.hue)
                         }
                     }
                 }
@@ -590,32 +641,22 @@ private fun EntryCard(
     entry: TotpEntry,
     now: Long,
     dragVisual: DragVisualState,
-    listState: LazyListState,
-    hue: Float
+    hue: Float,
+    isFloating: Boolean = false
 ) {
     val itemKey = "e:" + entry.id
     val dragging = dragVisual.activeKey == itemKey
 
-    // Live slot offset of this item in list coordinates. The visual anchor is
-    // baseOffset + dy (grab point plus finger travel); the per-slot translation is
-    // that anchor minus the item's current offset, so slot jumps - including the
-    // spring-animated ones of sibling rows - cancel out at draw time and the card
-    // never separates from the finger.
-    fun slotOffset(): Float {
-        val info = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == itemKey }
-        return if (info != null) info.offset.toFloat() else dragVisual.baseOffset
-    }
-
-    // The follow offset is written per pointer event by the list-level drag handler; read at
-    // draw time so the card is glued to the finger with zero frame lag. On release it springs
-    // back into the slot. NaN until the first release, so the release frame never flashes to 0.
+    // The floating overlay twin renders the card wherever the finger is; the in-list
+    // twin goes invisible but keeps its slot. On release the overlay vanishes and the
+    // in-list card reappears at releaseOffset (where the overlay was), springing back
+    // into its slot - one continuous motion across both layers.
     val settle = remember { Animatable(Float.NaN) }
     var wasDragging by remember { mutableStateOf(false) }
     val dark = isSystemInDarkTheme()
     LaunchedEffect(dragging) {
         if (wasDragging && !dragging) {
-            // Finger released: spring from the last follow position back into the slot.
-            settle.snapTo(dragVisual.baseOffset + dragVisual.dy - slotOffset())
+            settle.snapTo(dragVisual.releaseOffset)
             settle.animateTo(
                 0f,
                 spring(
@@ -630,13 +671,13 @@ private fun EntryCard(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 5.dp)
+            .alpha(if (dragging && !isFloating) 0f else 1f)
             .graphicsLayer {
                 shape = RoundedCornerShape(16.dp)
                 // Resting shadow keeps the card lifted off the page background; dragging
                 // raises it further.
                 shadowElevation = if (dragging) 24f else 8f
-                if (dragging) {
-                    translationY = dragVisual.baseOffset + dragVisual.dy - slotOffset()
+                if (dragging && isFloating) {
                     scaleX = 1.03f
                     scaleY = 1.03f
                 } else {

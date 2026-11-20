@@ -3,6 +3,9 @@ package io.blockman.totpull.ui
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableFloatStateOf
 import io.blockman.totpull.TotpEntry
 
 /**
@@ -56,6 +59,17 @@ object UiBridge {
 
     @Volatile
     var host: Host? = null
+
+    // ---------------------------------------------------------- drag reorder
+
+    /**
+     * Drag-reorder state shared between the codes page (which owns the list and the
+     * swap logic) and the root-level gesture/overlay (which must see events even when
+     * the finger leaves the list, and render the card above everything). All screen
+     * coordinates here are in LIST-CONTAINER space unless noted; [containerTopInRoot]
+     * is the conversion offset into root coordinates for the overlay.
+     */
+    val drag = DragVisualState()
 
     /** Bumped by the Java side whenever the vault list content or order changed. */
     val dataVersion = mutableIntStateOf(0)
@@ -125,4 +139,46 @@ object UiBridge {
     fun isFiltering(): Boolean {
         return query.value.isNotBlank() || filterSource.value != null || filterType.value != null
     }
+}
+
+/**
+ * State of an in-flight drag reorder. The root-level long-press gesture (MainScreen)
+ * calls [probe], [moved] and [finish]; the codes page installs their implementations
+ * (it owns the list) plus [slotOffset] and [containerTopInRoot] for the overlay.
+ */
+class DragVisualState {
+    var activeKey by mutableStateOf<String?>(null)
+
+    /** Accumulated finger movement relative to the grab point, in list coordinates. */
+    var dy by mutableFloatStateOf(0f)
+
+    /** The dragged item's slot offset at grab time (list coordinates). */
+    var baseOffset by mutableFloatStateOf(0f)
+
+    /**
+     * Finger Y in list coordinates, kept between pointer events so the auto-scroll
+     * loop keeps swapping rows while the finger rests in an edge zone. -1 when idle.
+     */
+    var lastFingerY by mutableFloatStateOf(-1f)
+
+    /** Entry being dragged and its group hue, for the floating overlay card. */
+    var overlayEntry: TotpEntry? = null
+    var overlayHue by mutableFloatStateOf(0f)
+
+    /** The list container's top edge in root coordinates (overlay placement). */
+    var containerTopInRoot by mutableFloatStateOf(0f)
+
+    /**
+     * Card offset relative to its final slot at release time; the in-list card springs
+     * from here back to 0 to match where the overlay card was when it vanished.
+     */
+    var releaseOffset by mutableFloatStateOf(0f)
+
+    // Installed by CodesPage; invoked from the root-level gesture in MainScreen.
+    var probe: (x: Float, y: Float) -> Boolean = { _, _ -> false }
+    var moved: (dy: Float, y: Float) -> Unit = { _, _ -> }
+    var finish: () -> Unit = {}
+
+    /** Live slot offset of the dragged item in list coordinates (set by CodesPage). */
+    var slotOffset: () -> Float = { 0f }
 }
