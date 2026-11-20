@@ -118,8 +118,18 @@ private fun groupDot(hue: Float, dark: Boolean): Color {
 private class DragVisualState {
     var activeKey by mutableStateOf<String?>(null)
 
-    /** Accumulated finger movement relative to the grabbed handle; the card's translationY. */
+    /** Accumulated finger movement relative to the grab point. */
     var dy by mutableFloatStateOf(0f)
+
+    /**
+     * The dragged item's slot offset at grab time. The card's visual position is
+     * [baseOffset] + [dy] in list coordinates (grab point plus finger travel); the
+     * drawing code converts that to a per-slot translationY by subtracting the item's
+     * CURRENT slot offset. This keeps the card glued to the finger no matter how the
+     * slots rearrange - including while sibling rows are still animating their spring
+     * placement, whose intermediate offsets must never leak into the drag math.
+     */
+    var baseOffset by mutableFloatStateOf(0f)
 }
 
 private fun rowKey(row: CodesRow): String = when (row) {
@@ -241,6 +251,7 @@ private fun CodesPage() {
                                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                                     dragVisual.activeKey = "e:" + row.entry.id
                                     dragVisual.dy = 0f
+                                    dragVisual.baseOffset = (info?.offset ?: 0).toFloat()
                                 }
                             },
                             onDrag = { change, dragAmount ->
@@ -277,11 +288,12 @@ private fun CodesPage() {
                                     (target.sourcePackage ?: "") ==
                                     (draggedEntry.sourcePackage ?: "")
                                 ) {
-                                    // Anchor compensation: the card's slot jumps from its old
-                                    // offset to the target's. Without subtracting that jump, the
-                                    // card would teleport by a full row on every swap. Keep the
-                                    // visual position glued to the finger across the swap.
-                                    dragVisual.dy += draggedInfo.offset - targetInfo.offset
+                                    // No anchor compensation here on purpose: the visual
+                                    // position is anchored to the finger (baseOffset + dy)
+                                    // and the per-slot translation subtracts the item's live
+                                    // offset, so a slot jump cancels out at draw time. Adding
+                                    // compensation on top would double-correct, and reading
+                                    // the target's offset mid-spring would drift.
                                     UiBridge.host?.moveEntry(draggedEntry, target)
                                 }
                             },
@@ -323,7 +335,7 @@ private fun CodesPage() {
                     ) {
                         when (row) {
                             is HeaderRow -> GroupHeader(row)
-                            is EntryRow -> EntryCard(row.entry, now, dragVisual, row.hue)
+                            is EntryRow -> EntryCard(row.entry, now, dragVisual, listState, row.hue)
                         }
                     }
                 }
@@ -522,10 +534,22 @@ private fun EntryCard(
     entry: TotpEntry,
     now: Long,
     dragVisual: DragVisualState,
+    listState: LazyListState,
     hue: Float
 ) {
     val itemKey = "e:" + entry.id
     val dragging = dragVisual.activeKey == itemKey
+
+    // Live slot offset of this item in list coordinates. The visual anchor is
+    // baseOffset + dy (grab point plus finger travel); the per-slot translation is
+    // that anchor minus the item's current offset, so slot jumps - including the
+    // spring-animated ones of sibling rows - cancel out at draw time and the card
+    // never separates from the finger.
+    fun slotOffset(): Float {
+        val info = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == itemKey }
+        return if (info != null) info.offset.toFloat() else dragVisual.baseOffset
+    }
+
     // The follow offset is written per pointer event by the list-level drag handler; read at
     // draw time so the card is glued to the finger with zero frame lag. On release it springs
     // back into the slot. NaN until the first release, so the release frame never flashes to 0.
@@ -535,7 +559,7 @@ private fun EntryCard(
     LaunchedEffect(dragging) {
         if (wasDragging && !dragging) {
             // Finger released: spring from the last follow position back into the slot.
-            settle.snapTo(dragVisual.dy)
+            settle.snapTo(dragVisual.baseOffset + dragVisual.dy - slotOffset())
             settle.animateTo(
                 0f,
                 spring(
@@ -556,7 +580,7 @@ private fun EntryCard(
                 // raises it further.
                 shadowElevation = if (dragging) 24f else 8f
                 if (dragging) {
-                    translationY = dragVisual.dy
+                    translationY = dragVisual.baseOffset + dragVisual.dy - slotOffset()
                     scaleX = 1.03f
                     scaleY = 1.03f
                 } else {
