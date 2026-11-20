@@ -212,10 +212,42 @@ private fun DragOverlay() {
         }
     }
 
+    // Fly-back: on release the card glides from its floating position into the final
+    // slot (the slot offset is already settled, since the data move happened during the
+    // drag); when it lands it hands over to the in-list twin via settled().
+    val flyBack = remember { Animatable(0f) }
+    LaunchedEffect(drag.settling) {
+        if (drag.settling) {
+            val delta = drag.slotOffset() - (drag.baseOffset + drag.dy)
+            flyBack.snapTo(0f)
+            drag.settleProgress = 0f
+            flyBack.animateTo(
+                delta,
+                spring(
+                    dampingRatio = Spring.DampingRatioNoBouncy,
+                    stiffness = Spring.StiffnessMediumLow
+                )
+            ) {
+                drag.settleProgress = if (delta == 0f) {
+                    1f
+                } else {
+                    (flyBack.value / delta).coerceIn(0f, 1f)
+                }
+            }
+            drag.settled()
+        }
+    }
+
     Box(
         Modifier
             .fillMaxSize()
-            .offset { IntOffset(0, (drag.containerTopInRoot + drag.baseOffset + drag.dy).roundToInt()) }
+            .offset {
+                IntOffset(
+                    0,
+                    (drag.containerTopInRoot + drag.baseOffset + drag.dy + flyBack.value)
+                        .roundToInt()
+                )
+            }
             // No pointer modifiers here on purpose: touch passes straight through to
             // the gesture root underneath.
     ) {
@@ -338,7 +370,10 @@ private fun CodesPage() {
                 val maxSpeed = with(density) { 16.dp.toPx() }
                 while (dragVisual.activeKey != null && isActive) {
                     val y = dragVisual.lastFingerY
-                    if (y >= 0f) {
+                    // Sentinel is exactly -1f (no finger); a NEGATIVE y is a real finger
+                    // position above the viewport top and must scroll the list upward -
+                    // the old "y >= 0f" guard silently killed top-edge auto-scroll.
+                    if (y != -1f) {
                         val layout = listState.layoutInfo
                         val top = layout.viewportStartOffset.toFloat()
                         val bottom = layout.viewportEndOffset.toFloat()
@@ -365,7 +400,12 @@ private fun CodesPage() {
             // Hand the drag lifecycle to the root-level gesture (MainScreen): it sees
             // events even when the finger leaves the list bounds, which is what keeps
             // the drag alive while the finger rides the bottom bar or screen edges.
-            dragVisual.probe = { x, y ->
+            dragVisual.probe = probe@{ x, y ->
+                // A fly-back is in progress: ignore new grabs until it lands (a few
+                // hundred ms), otherwise two drags would fight over the overlay.
+                if (dragVisual.settling) {
+                    return@probe false
+                }
                 val layout = listState.layoutInfo
                 val listY = y - dragVisual.containerTopInRoot
                 val info = layout.visibleItemsInfo.firstOrNull {
@@ -393,13 +433,14 @@ private fun CodesPage() {
             }
             dragVisual.finish = {
                 if (dragVisual.activeKey != null) {
-                    dragVisual.releaseOffset = dragVisual.baseOffset + dragVisual.dy -
-                            dragVisual.slotOffset()
+                    // Keep the floating card on screen and let it fly back into the slot
+                    // (settling); only then does it hand over to the in-list twin, which
+                    // sits in the final slot already (releaseOffset 0 = no jump).
+                    dragVisual.releaseOffset = 0f
+                    dragVisual.settling = true
+                    dragVisual.lastFingerY = -1f
+                    UiBridge.host?.persistOrder()
                 }
-                dragVisual.activeKey = null
-                dragVisual.lastFingerY = -1f
-                dragVisual.overlayEntry = null
-                UiBridge.host?.persistOrder()
             }
             dragVisual.slotOffset = {
                 val info = listState.layoutInfo.visibleItemsInfo
@@ -674,13 +715,14 @@ private fun EntryCard(
             .alpha(if (dragging && !isFloating) 0f else 1f)
             .graphicsLayer {
                 shape = RoundedCornerShape(16.dp)
-                // Resting shadow keeps the card lifted off the page background; dragging
-                // raises it further.
-                shadowElevation = if (dragging) 24f else 8f
                 if (dragging && isFloating) {
-                    scaleX = 1.03f
-                    scaleY = 1.03f
+                    // Fly-back progress blends the "lifted" look back to resting.
+                    val rest = dragVisual.settleProgress
+                    shadowElevation = 24f - 16f * rest
+                    scaleX = 1.03f - 0.03f * rest
+                    scaleY = scaleX
                 } else {
+                    shadowElevation = if (dragging) 24f else 8f
                     translationY = if (settle.value.isNaN()) 0f else settle.value
                 }
             }

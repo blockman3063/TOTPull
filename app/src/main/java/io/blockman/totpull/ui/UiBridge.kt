@@ -174,6 +174,23 @@ class DragVisualState {
      */
     var releaseOffset by mutableFloatStateOf(0f)
 
+    /**
+     * True between finger-up and the overlay card finishing its fly-back into the slot.
+     * The overlay stays visible (and topmost) through the flight; [settled] hands the
+     * card over to the in-list twin, which is already in place by then.
+     */
+    var settling by mutableStateOf(false)
+
+    /** Fly-back progress 0→1; drives the floating card's scale/shadow blend-down. */
+    var settleProgress by mutableFloatStateOf(0f)
+
+    /** Called by the overlay when its fly-back animation completes. */
+    fun settled() {
+        settling = false
+        activeKey = null
+        overlayEntry = null
+    }
+
     // Installed by CodesPage; invoked from the root-level gesture in MainScreen.
     var probe: (x: Float, y: Float) -> Boolean = { _, _ -> false }
     var moved: (dy: Float, y: Float) -> Unit = { _, _ -> }
