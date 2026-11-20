@@ -31,6 +31,8 @@ public class InfoPage {
         void onFastPathChanged(boolean enabled);
 
         void onStart();
+
+        void onExportAll();
     }
 
     private final Activity _activity;
@@ -169,6 +171,9 @@ public class InfoPage {
                 str(moduleOk ? R.string.row_extract_ok : R.string.row_extract_unconfirmed),
                 moduleOk ? R.color.status_ok_text : R.color.text_secondary);
 
+        // Export lives here because it is an operation, not a status readout.
+        addClickableRow(_groupFeature, str(R.string.row_export), v -> _listener.onExportAll());
+
         // Root-only: hidden by default when there is no root, per the privilege-tier rule.
         if (root) {
             addSwitchRow(_groupFeature);
@@ -197,6 +202,16 @@ public class InfoPage {
         valueView.setText(value);
         valueView.setTextColor(color(valueColor));
         row.setBackground(null);
+        parent.addView(row);
+    }
+
+    /** A whole-row tap target (keeps the built-in ripple); value is blank, chevron shown. */
+    private void addClickableRow(LinearLayout parent, String label,
+                                 View.OnClickListener onClick) {
+        View row = LayoutInflater.from(_activity).inflate(R.layout.item_info_row, parent, false);
+        ((TextView) row.findViewById(R.id.row_label)).setText(label);
+        row.findViewById(R.id.row_chevron).setVisibility(View.VISIBLE);
+        row.setOnClickListener(onClick);
         parent.addView(row);
     }
 

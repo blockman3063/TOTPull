@@ -12,12 +12,12 @@ import io.blockman.totpull.TotpGenerator;
 /**
  * Parses Google Authenticator's export format: {@code otpauth-migration://offline?data=<base64>}.
  *
- * <p>Layout (protobuf):
+ * <p>Layout (protobuf, per Google's official migration.proto):
  * <pre>
  * MigrationPayload { repeated OtpParameters otp_parameters = 1; ... }
  * OtpParameters { bytes secret = 1; string name = 2; string issuer = 3;
- *                 Algorithm algorithm = 4; DigitCount digits = 5;
- *                 OtpType type = 6; int64 counter = 7; }
+ *                 Algorithm algorithm = 4; DigitCount digits = 5; OtpType type = 6;
+ *                 int64 counter = 7; }
  * </pre>
  * The secret here is raw bytes, not base32 - that is the usual source of "invalid secret" bugs
  * when people hand-roll this parser.
@@ -114,9 +114,11 @@ public final class MigrationImporter {
                     algorithm = (int) reader.readVarint();
                     break;
                 case 5:
+                    // DigitCount: SIX = 1, EIGHT = 2 (official enum).
                     digits = (int) reader.readVarint();
                     break;
                 case 6:
+                    // OtpType: HOTP = 1, TOTP = 2.
                     type = (int) reader.readVarint();
                     break;
                 case 7:

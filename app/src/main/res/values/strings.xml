@@ -23,9 +23,13 @@
     <string name="import_aegis_unsupported">不支持的 Aegis 备份版本</string>
     <string name="action_add">添加</string>
     <string name="copied">已复制 %1$s</string>
-    <string name="entry_menu_desc">条目操作菜单</string>
-    <string name="entry_menu_copy">复制验证码</string>
-    <string name="entry_menu_edit">编辑条目</string>
+    <string name="entry_menu_desc">拖动排序 / 分享</string>
+    <string name="entry_menu_share">分享</string>
+    <string name="entry_menu_share_code">分享验证码</string>
+    <string name="entry_menu_share_uri">分享 otpauth 链接</string>
+    <string name="entry_menu_deeplink">发送到验证器</string>
+    <string name="action_scan">扫码导入</string>
+    <string name="scan_prompt">将二维码放入取景框</string>
     <string name="nothing_in_clipboard">剪贴板里没有 otpauth 链接</string>
     <string name="imported">导入了 %1$d 条</string>
     <string name="bad_uri">无法解析这条链接</string>
@@ -164,6 +168,29 @@
     <string name="row_extract_unconfirmed">未确认</string>
 
     <string name="row_fast">快速通道</string>
+
+    <string name="row_export">导出全部</string>
+    <string name="export_title">导出全部</string>
+    <string name="export_otpauth">otpauth 链接</string>
+    <string name="export_aegis">Aegis JSON</string>
+    <string name="export_deeplink">Deep link</string>
+    <string name="export_qr">Google 验证器二维码</string>
+    <string name="export_subject">TOTPull 导出（%1$d 条）</string>
+    <string name="export_empty">没有可导出的条目</string>
+    <string name="export_failed">导出失败</string>
+    <string name="deeplink_shared">已生成迁移链接，安装了本应用的设备点击即可导入</string>
+    <string name="deeplink_pick_title">选择要导入的验证器</string>
+    <string name="deeplink_batch_title">选择要发送的批次</string>
+    <string name="deeplink_batch_item">第 %1$d / %2$d 批 · 条目 %3$d–%4$d</string>
+    <string name="deeplink_no_handler">没有验证器支持深链导入，可用「Google 验证器二维码」方式</string>
+    <string name="deeplink_sent">已交给 %1$s 导入</string>
+    <string name="deeplink_fallback_qr">本机的验证器不支持批量深链导入，改用二维码方式</string>
+    <string name="export_qr_title">迁移二维码</string>
+    <string name="qr_hint">用 Google 验证器的「导入账号 → 扫描二维码」读取</string>
+    <string name="qr_hint_multi">每张二维码最多 10 条，用下方按钮翻页</string>
+    <string name="qr_prev">上一张</string>
+    <string name="qr_next">下一张</string>
+    <string name="qr_page">第 %1$d / %2$d 张</string>
 
 
     <string name="row_version">版本</string>

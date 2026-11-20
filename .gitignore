@@ -14,3 +14,7 @@ local.properties
 # Development samples, device dumps and screenshots.
 # Contains a pulled LSPosed config database and screenshots of a real account.
 test/
+
+# UI automation debug leftovers (screenshots / view dumps)
+/*.png
+/*.xml

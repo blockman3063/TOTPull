@@ -6,20 +6,15 @@ import android.content.Context;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.content.Intent;
-import android.content.res.ColorStateList;
-import android.graphics.Typeface;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.text.Editable;
-import android.text.TextWatcher;
+import android.util.Log;
 import android.view.View;
 import android.widget.EditText;
 import android.widget.ImageView;
-import android.widget.ListView;
-import android.widget.PopupMenu;
 import android.widget.RadioButton;
 import android.widget.RadioGroup;
 import android.widget.TextView;
@@ -28,8 +23,6 @@ import android.widget.Toast;
 import androidx.annotation.Nullable;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import androidx.appcompat.app.AppCompatActivity;
-
-import com.google.android.material.floatingactionbutton.FloatingActionButton;
 
 import org.json.JSONObject;
 
@@ -53,7 +46,11 @@ import io.blockman.totpull.TotpStore;
 import io.blockman.totpull.format.AegisVault;
 import io.blockman.totpull.format.ImportEngine;
 
-public class MainActivity extends AppCompatActivity {
+/**
+ * All business logic lives here; every piece of UI is Compose (see CodesScreen.kt) and talks
+ * back through {@link UiBridge.Host}. The activity no longer owns any views of its own.
+ */
+public class MainActivity extends AppCompatActivity implements UiBridge.Host {
     /** Optional extras so an extractor can stamp the originating app onto the entry. */
     public static final String EXTRA_SOURCE_PACKAGE = "source_package";
     public static final String EXTRA_SOURCE_LABEL = "source_label";
@@ -63,6 +60,8 @@ public class MainActivity extends AppCompatActivity {
     private static final int REQ_NOTIFY = 1002;
     /** EditGroupActivity answered: re-import that source group. */
     private static final int REQ_EDIT_GROUP = 1003;
+
+    private static final int REQ_SCAN = 1004;
 
     /** Broadcast exchanged with the Xposed module running inside the source app. */
     static final String ACTION_PROBE = "io.blockman.totpull.action.PROBE";
@@ -101,31 +100,9 @@ public class MainActivity extends AppCompatActivity {
 
     private TotpStore _store;
     private final List<TotpEntry> _entries = new ArrayList<>();
-    private EntryAdapter _adapter;
-    private ListView _listView;
-    private View _emptyView;
-    private TextView _codesSubtitle;
 
-    // Live filter selection. Empty query / null dimensions mean "show everything".
-    private String _query = "";
-    private String _filterSource;   // sourcePackage, "" = hand-added, null = all
-    private String _filterType;     // TotpEntry.TYPE_*, null = all
-    private EditText _searchInput;
-    private View _searchClear;
-    private TextView _filterLabel;
-    private ImageView _filterIcon;
-
-    /** 0 = codes list, 1 = info page. */
+    /** Mirrors UiBridge.tab; only read here to know whether the info page is in front. */
     private int _tab;
-    private View _pageCodes;
-    private View _pageInfo;
-    private View _navCodesPill;
-    private View _navInfoPill;
-    private android.widget.ImageView _navCodesIcon;
-    private android.widget.ImageView _navInfoIcon;
-    private TextView _navCodesLabel;
-    private TextView _navInfoLabel;
-    private InfoPage _info;
 
     /** Non-null while we are waiting for the module to answer a probe. */
     private ExtractTarget _pendingProbe;
@@ -140,68 +117,25 @@ public class MainActivity extends AppCompatActivity {
     private boolean _vaultWarnShown;
 
     private final Handler _handler = new Handler(Looper.getMainLooper());
+
     /** scrypt can take seconds; never run it on the main thread. */
     private final ExecutorService _importIo = Executors.newSingleThreadExecutor();
-    private final Runnable _tick = new Runnable() {
-        @Override
-        public void run() {
-            if (_adapter != null) {
-                _adapter.refreshVisibleCodes(_listView);
-            }
-            _handler.postDelayed(this, 500);
-        }
-    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_main);
 
         _store = new TotpStore(this);
         // One-off repair of legacy Google Authenticator secrets, before the list is built.
         _store.migrateCanonicalSecrets();
-        _adapter = new EntryAdapter(this, _entries);
-        _adapter.setOnEntryMenuListener(this::showEntryMenu);
 
-        _listView = findViewById(R.id.list);
-        _emptyView = findViewById(R.id.empty);
-        _listView.setAdapter(_adapter);
-
-        _listView.setOnItemClickListener((parent, view, position, id) -> {
-            Object row = _adapter.getItem(position);
-            if (row instanceof TotpEntry) {
-                onEntryClicked((TotpEntry) row);
-            } else if (row instanceof EntryAdapter.Header) {
-                _adapter.toggleGroup(((EntryAdapter.Header) row).packageName);
-            }
-        });
-
-        _listView.setOnItemLongClickListener((parent, view, position, id) -> {
-            Object row = _adapter.getItem(position);
-            if (row instanceof TotpEntry) {
-                // Straight into the editor - no intermediate menu. Delete lives in the editor.
-                openEditor(((TotpEntry) row).id);
-                return true;
-            }
-            if (row instanceof EntryAdapter.Header) {
-                Intent intent = new Intent(this, EditGroupActivity.class);
-                String pkg = ((EntryAdapter.Header) row).packageName;
-                intent.putExtra(EditGroupActivity.EXTRA_PACKAGE, pkg == null ? "" : pkg);
-                startActivityForResult(intent, REQ_EDIT_GROUP);
-                return true;
-            }
-            return false;
-        });
-
-        FloatingActionButton fab = findViewById(R.id.fab);
-        fab.setOnClickListener(v -> showAddMenu());
-
-        _codesSubtitle = findViewById(R.id.codes_subtitle);
-        setUpFilters();
+        // Swaps the View layout for Compose and binds this activity as the UiBridge.Host.
+        AppUiKt.installUi(this, this);
 
         // Module readiness survives restarts; only a probe can change it.
         _moduleReady = Capabilities.cachedModuleReady(this);
-        setUpNavigation();
+        UiBridge.INSTANCE.setModuleReady(_moduleReady);
+        UiBridge.INSTANCE.setSetupDone(Capabilities.isSetupDone(this));
         reload();
 
         handleIntent(getIntent());
@@ -211,59 +145,57 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    // ------------------------------------------------------------------ search & filter
+    // ------------------------------------------------------------------ UiBridge.Host
 
-    private void setUpFilters() {
-        _searchInput = findViewById(R.id.search_input);
-        _searchClear = findViewById(R.id.search_clear);
-        _filterLabel = findViewById(R.id.filter_label);
-        _filterIcon = findViewById(R.id.filter_icon);
-
-        _searchInput.addTextChangedListener(new TextWatcher() {
-            @Override
-            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
-            }
-
-            @Override
-            public void onTextChanged(CharSequence s, int start, int before, int count) {
-            }
-
-            @Override
-            public void afterTextChanged(Editable s) {
-                _query = s.toString();
-                _searchClear.setVisibility(s.length() > 0 ? View.VISIBLE : View.GONE);
-                applyFilter();
-            }
-        });
-        _searchClear.setOnClickListener(v -> _searchInput.setText(""));
-        findViewById(R.id.filter_button).setOnClickListener(v -> showFilterDialog());
+    @Override
+    public List<TotpEntry> entries() {
+        return _entries;
     }
 
-    /** Pushes the current selection into the adapter and refreshes the count/empty state. */
-    private void applyFilter() {
-        if (_adapter != null) {
-            _adapter.setFilter(_query, _filterSource, _filterType);
-        }
-        updateSubtitle();
-        updateEmptyState();
-        updateFilterBadge();
+    @Override
+    public void onEntryTap(TotpEntry entry) {
+        onEntryClicked(entry);
     }
 
-    private void updateFilterBadge() {
-        boolean active = _adapter != null && _adapter.isFiltering();
-        int color = active ? R.color.accent : R.color.text_secondary;
-        _filterIcon.setImageTintList(ColorStateList.valueOf(getResources().getColor(color)));
-        _filterLabel.setTextColor(getResources().getColor(color));
-        _filterLabel.setText(active ? R.string.filter_active : R.string.filter_title);
+    @Override
+    public void onEntryEdit(TotpEntry entry) {
+        // Straight into the editor - no intermediate menu. Delete lives in the editor.
+        openEditor(entry.id);
     }
 
-    /** Source + type pickers built from the data actually in the vault. */
-    private void showFilterDialog() {
+    @Override
+    public void onEntryShareMenu(TotpEntry entry) {
+        showEntryMenu(entry);
+    }
+
+    @Override
+    public void onGroupEdit(String packageName) {
+        Intent intent = new Intent(this, EditGroupActivity.class);
+        intent.putExtra(EditGroupActivity.EXTRA_PACKAGE, packageName == null ? "" : packageName);
+        startActivityForResult(intent, REQ_EDIT_GROUP);
+    }
+
+    @Override
+    public void onAdd() {
+        showAddMenu();
+    }
+
+    @Override
+    public void onTabChanged(int tab) {
+        _tab = tab;
+    }
+
+    @Override
+    public void showFilterDialog() {
         View view = getLayoutInflater().inflate(R.layout.dialog_filter, null);
         RadioGroup sourceGroup = view.findViewById(R.id.filter_source_group);
         RadioGroup typeGroup = view.findViewById(R.id.filter_type_group);
 
-        addRadio(sourceGroup, getString(R.string.filter_all), null, _filterSource == null);
+        // Filter selection lives in UiBridge so the Compose list updates live.
+        String selectedSource = UiBridge.INSTANCE.readFilterSource();
+        String selectedType = UiBridge.INSTANCE.readFilterType();
+
+        addRadio(sourceGroup, getString(R.string.filter_all), null, selectedSource == null);
         Set<String> sources = new LinkedHashSet<>();
         for (TotpEntry e : _entries) {
             sources.add(e.sourcePackage == null ? "" : e.sourcePackage);
@@ -283,44 +215,99 @@ public class MainActivity extends AppCompatActivity {
                 }
                 label = found.isEmpty() ? pkg : found;
             }
-            addRadio(sourceGroup, label, pkg, pkg.equals(_filterSource));
+            addRadio(sourceGroup, label, pkg, pkg.equals(selectedSource));
         }
 
-        addRadio(typeGroup, getString(R.string.filter_all), null, _filterType == null);
+        addRadio(typeGroup, getString(R.string.filter_all), null, selectedType == null);
         addRadio(typeGroup, getString(R.string.filter_type_totp), TotpEntry.TYPE_TOTP,
-                TotpEntry.TYPE_TOTP.equals(_filterType));
+                TotpEntry.TYPE_TOTP.equals(selectedType));
         addRadio(typeGroup, getString(R.string.filter_type_hotp), TotpEntry.TYPE_HOTP,
-                TotpEntry.TYPE_HOTP.equals(_filterType));
+                TotpEntry.TYPE_HOTP.equals(selectedType));
         addRadio(typeGroup, getString(R.string.filter_type_steam), TotpEntry.TYPE_STEAM,
-                TotpEntry.TYPE_STEAM.equals(_filterType));
+                TotpEntry.TYPE_STEAM.equals(selectedType));
 
         sourceGroup.setOnCheckedChangeListener((group, checkedId) ->
-                _filterSource = tagOf(group, checkedId));
+                UiBridge.INSTANCE.setFilterSource(tagOf(group, checkedId)));
         typeGroup.setOnCheckedChangeListener((group, checkedId) ->
-                _filterType = tagOf(group, checkedId));
+                UiBridge.INSTANCE.setFilterType(tagOf(group, checkedId)));
 
         new MaterialAlertDialogBuilder(this)
                 .setTitle(R.string.filter_title)
                 .setView(view)
                 .setNeutralButton(R.string.filter_reset, (d, w) -> {
-                    _filterSource = null;
-                    _filterType = null;
-                    applyFilter();
+                    UiBridge.INSTANCE.setFilterSource(null);
+                    UiBridge.INSTANCE.setFilterType(null);
                 })
-                .setPositiveButton(R.string.filter_done, (d, w) -> applyFilter())
+                .setPositiveButton(R.string.filter_done, null)
                 .show();
     }
 
+    @Override
+    public void moveEntry(TotpEntry entry, TotpEntry target) {
+        int from = _entries.indexOf(entry);
+        int to = _entries.indexOf(target);
+        if (from < 0 || to < 0 || from == to) {
+            return;
+        }
+        boolean down = to > from;
+        _entries.remove(from);
+        int insertAt = _entries.indexOf(target);
+        if (insertAt < 0) {
+            // Target vanished mid-drag; put the entry back where it was.
+            _entries.add(Math.min(from, _entries.size()), entry);
+            UiBridge.INSTANCE.notifyDataChanged();
+            return;
+        }
+        // Moving down: land right after the target (its index shifted up by the removal).
+        // Moving up: land right on it.
+        int landedAt = down ? insertAt + 1 : insertAt;
+        _entries.add(landedAt, entry);
+        Log.i("UITouch", "move " + from + " -> " + landedAt);
+        UiBridge.INSTANCE.notifyDataChanged();
+    }
+
+    /** The vault stores entries as one list; the display order follows it. */
+    @Override
+    public void persistOrder() {
+        _store.save(_entries);
+    }
+
+    @Override
+    public void onRedetect() {
+        detectRoot(false);
+    }
+
+    @Override
+    public void onOpenRootManager() {
+        launchRootManager();
+    }
+
+    @Override
+    public void onFastPathChanged(boolean enabled) {
+        Capabilities.setFastPathEnabled(this, enabled);
+    }
+
+    @Override
+    public void onSetupStart() {
+        markSetup();
+        UiBridge.INSTANCE.showTab(0);
+    }
+
+    @Override
+    public void onExportAll() {
+        exportAll();
+    }
+
     /** A radio's tag is its filter value; the "all" option carries no tag. */
-    private void addRadio(RadioGroup group, String label, String value, boolean checked) {
-        RadioButton radio = new RadioButton(this);
+    private static void addRadio(RadioGroup group, String label, String value, boolean checked) {
+        RadioButton radio = new RadioButton(group.getContext());
         radio.setText(label);
         radio.setTag(value); // null is fine: it marks "all"
         radio.setChecked(checked);
         group.addView(radio);
     }
 
-    private String tagOf(RadioGroup group, int checkedId) {
+    private static String tagOf(RadioGroup group, int checkedId) {
         if (checkedId == View.NO_ID) {
             return null;
         }
@@ -328,110 +315,12 @@ public class MainActivity extends AppCompatActivity {
         return checked == null ? null : (String) checked.getTag();
     }
 
-    // ------------------------------------------------------------------ navigation
-
-    private void setUpNavigation() {
-        _pageCodes = findViewById(R.id.page_codes);
-        _pageInfo = findViewById(R.id.page_info);
-        _navCodesPill = findViewById(R.id.nav_codes_pill);
-        _navInfoPill = findViewById(R.id.nav_info_pill);
-        _navCodesIcon = findViewById(R.id.nav_codes_icon);
-        _navInfoIcon = findViewById(R.id.nav_info_icon);
-        _navCodesLabel = findViewById(R.id.nav_codes_label);
-        _navInfoLabel = findViewById(R.id.nav_info_label);
-
-        findViewById(R.id.nav_codes).setOnClickListener(v -> showTab(0));
-        findViewById(R.id.nav_info).setOnClickListener(v -> showTab(1));
-
-        _info = new InfoPage(this, _pageInfo, new InfoPage.Listener() {
-            @Override
-            public void onRedetect() {
-                detectRoot(false);
-            }
-
-            @Override
-            public void onOpenRootManager() {
-                launchRootManager();
-            }
-
-            @Override
-            public void onFastPathChanged(boolean enabled) {
-                Capabilities.setFastPathEnabled(MainActivity.this, enabled);
-            }
-
-            @Override
-            public void onStart() {
-                Capabilities.markSetupDone(MainActivity.this);
-                showTab(0);
-            }
-        });
-
-        showTab(0, false);
-    }
-
-    /** Side-effect-free tab switch, used while wiring the layout up. */
-    private void applyTab(int tab) {
-        _tab = tab;
-        _pageCodes.setVisibility(tab == 0 ? View.VISIBLE : View.GONE);
-        _pageInfo.setVisibility(tab == 1 ? View.VISIBLE : View.GONE);
-
-        applyNavState(_navCodesPill, _navCodesIcon, _navCodesLabel, tab == 0);
-        applyNavState(_navInfoPill, _navInfoIcon, _navInfoLabel, tab == 1);
-    }
-
-    private void showTab(int tab) {
-        showTab(tab, true);
-    }
-
-    private void showTab(int tab, boolean userInitiated) {
-        boolean changed = _tab != tab;
-        applyTab(tab);
-
-        if (tab == 1) {
-            refreshInfo();
-        } else if (userInitiated && changed && !Capabilities.isSetupDone(this)) {
-            // Leaving the info page is the same as accepting the detected setup.
-            Capabilities.markSetupDone(this);
-        }
-    }
-
-    private void applyNavState(View pill, android.widget.ImageView icon, TextView label,
-                               boolean active) {
-        pill.setBackgroundResource(active ? R.drawable.bg_nav_pill : 0);
-        int tint = getColor(active ? R.color.nav_item_active : R.color.nav_item_inactive);
-        icon.setImageTintList(ColorStateList.valueOf(tint));
-        label.setTextColor(tint);
-        label.setTypeface(null, active ? Typeface.BOLD : Typeface.NORMAL);
-    }
-
-    /**
-     * First launch: land on the info tab and detect privileges instead of popping a dialog.
-     * The tier the user lands in decides which features are even shown from then on.
-     */
-    private void startFirstRun() {
-        showTab(1);
-        if (!Capabilities.isRootDecided(this)) {
-            detectRoot(true);
-        }
-    }
-
-    /** Single place that records module readiness, in memory and across restarts. */
-    private void setModuleReady(Boolean ready) {
-        _moduleReady = ready;
-        Capabilities.setModuleReady(this, ready);
-    }
-
-    private void refreshInfo() {
-        if (_info != null) {
-            _info.bind(_moduleReady, Capabilities.isSetupDone(this));
-        }
-    }
+    // ------------------------------------------------------------------ lifecycle
 
     @Override
     protected void onDestroy() {
         _pendingProbe = null;
         _handler.removeCallbacks(_probeTimeout);
-        _handler.removeCallbacks(_tick);
         _importIo.shutdownNow();
         super.onDestroy();
     }
@@ -439,8 +328,6 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
-        reload();
-        _handler.post(_tick);
 
         // The answer is delivered to ProbeReceiver, possibly while this activity was not running.
         // Show whatever came back as soon as we are back in front of the user.
@@ -480,17 +367,29 @@ public class MainActivity extends AppCompatActivity {
     }
 
     @Override
-    protected void onPause() {
-        super.onPause();
-        _handler.removeCallbacks(_tick);
-    }
-
-    @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
         handleIntent(intent);
         reload();
+    }
+
+    /** Single place that records module readiness, in memory and across restarts. */
+    private void setModuleReady(Boolean ready) {
+        _moduleReady = ready;
+        Capabilities.setModuleReady(this, ready);
+        UiBridge.INSTANCE.setModuleReady(ready);
+    }
+
+    /** Single place that records first-run completion. */
+    private void markSetup() {
+        Capabilities.markSetupDone(this);
+        UiBridge.INSTANCE.setSetupDone(true);
+    }
+
+    /** Asks the Compose side to repaint the info page (root/module state may have changed). */
+    private void refreshInfo() {
+        UiBridge.INSTANCE.refreshInfo();
     }
 
     private void reload() {
@@ -503,28 +402,7 @@ public class MainActivity extends AppCompatActivity {
             _vaultWarnShown = true;
             toast(getString(R.string.probe_vault_unreadable));
         }
-        applyFilter();
-    }
-
-    /** "12 个条目 · 2 个来源" under the page title, or "显示 3 / 12 条" while filtered. */
-    private void updateSubtitle() {
-        if (_codesSubtitle == null) {
-            return;
-        }
-        if (_entries.isEmpty()) {
-            _codesSubtitle.setText(R.string.codes_subtitle_empty);
-            return;
-        }
-        if (_adapter != null && _adapter.isFiltering()) {
-            _codesSubtitle.setText(getString(R.string.codes_subtitle_filtered,
-                    _adapter.getVisibleCount(), _entries.size()));
-            return;
-        }
-        java.util.HashSet<String> sources = new java.util.HashSet<>();
-        for (TotpEntry entry : _entries) {
-            sources.add(entry.sourcePackage == null ? "" : entry.sourcePackage);
-        }
-        _codesSubtitle.setText(getString(R.string.codes_subtitle, _entries.size(), sources.size()));
+        UiBridge.INSTANCE.notifyDataChanged();
     }
 
     private void handleIntent(Intent intent) {
@@ -620,24 +498,207 @@ public class MainActivity extends AppCompatActivity {
         toast(getString(R.string.imported, 1));
     }
 
-    /** The three-dot button on a code card: copy it or jump into the editor. */
-    private void showEntryMenu(TotpEntry entry, View anchor) {
-        PopupMenu menu = new PopupMenu(this, anchor);
-        menu.getMenu().add(getString(R.string.entry_menu_copy));
-        menu.getMenu().add(getString(R.string.entry_menu_edit));
-        menu.setOnMenuItemClickListener(item -> {
-            String title = item.getTitle().toString();
-            if (title.equals(getString(R.string.entry_menu_copy))) {
-                onEntryClicked(entry);
-                return true;
+    /**
+     * The three-bar handle, tapped: offers the share options. Copy and edit live on the card
+     * body - tap copies, long-press opens the editor.
+     */
+    private void showEntryMenu(TotpEntry entry) {
+        String code = entry.isSupported() ? TotpGenerator.generate(entry) : "";
+        String[] items = {
+                getString(R.string.entry_menu_share_code),
+                getString(R.string.entry_menu_share_uri),
+                getString(R.string.entry_menu_deeplink),
+        };
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(entry.displayName())
+                .setItems(items, (d, which) -> {
+                    if (which == 0) {
+                        String account = entry.displayAccount();
+                        String subject = account.isEmpty() || account.equals(entry.displayName())
+                                ? entry.displayName() : entry.displayName() + " · " + account;
+                        shareText(subject, code.isEmpty() ? "----"
+                                : TotpGenerator.format(code, entry.isSteam()));
+                    } else if (which == 1) {
+                        shareText(entry.displayName(), entry.toOtpauthUri());
+                    } else {
+                        // Hand the single otpauth URI straight to another validator app.
+                        sendDeeplink(entry.toOtpauthUri());
+                    }
+                })
+                .show();
+    }
+
+    private void shareText(String subject, String text) {
+        Intent send = new Intent(Intent.ACTION_SEND);
+        send.setType("text/plain");
+        if (subject != null && !subject.isEmpty()) {
+            send.putExtra(Intent.EXTRA_SUBJECT, subject);
+        }
+        send.putExtra(Intent.EXTRA_TEXT, text);
+        startActivity(Intent.createChooser(send, getString(R.string.entry_menu_share)));
+    }
+
+    // ------------------------------------------------------------------ export all
+
+    /**
+     * Whole-vault export, offered from the info page. Both formats leave through the share
+     * sheet, so saving to a file is whatever the user's share targets provide.
+     */
+    private void exportAll() {
+        if (_entries.isEmpty()) {
+            toast(getString(R.string.export_empty));
+            return;
+        }
+        String[] formats = {
+                getString(R.string.export_otpauth),
+                getString(R.string.export_aegis),
+                getString(R.string.export_deeplink),
+                getString(R.string.export_qr),
+        };
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.export_title)
+                .setItems(formats, (d, which) -> {
+                    try {
+                        if (which == 0) {
+                            shareExport("text/plain",
+                                    getString(R.string.export_subject, _entries.size()),
+                                    io.blockman.totpull.format.ExportEngine.toOtpauthText(_entries));
+                        } else if (which == 1) {
+                            shareExport("application/json",
+                                    getString(R.string.export_subject, _entries.size()),
+                                    io.blockman.totpull.format.ExportEngine.toAegisJson(_entries));
+                        } else if (which == 2) {
+                            shareDeeplink();
+                        } else {
+                            showMigrationQrDialog();
+                        }
+                    } catch (Exception e) {
+                        toast(getString(R.string.export_failed));
+                    }
+                })
+                .setNegativeButton(R.string.cancel, null)
+                .show();
+    }
+
+    private void shareExport(String mime, String subject, String body) {
+        Intent share = new Intent(Intent.ACTION_SEND);
+        share.setType(mime);
+        share.putExtra(Intent.EXTRA_SUBJECT, subject);
+        share.putExtra(Intent.EXTRA_TEXT, body);
+        startActivity(Intent.createChooser(share, getString(R.string.export_title)));
+    }
+
+    // ------------------------------------------------------------------ migration deeplink / QR
+
+    /**
+     * Sends the whole vault as otpauth-migration deeplink INTENTS. Unlike sharing the link as
+     * text, an ACTION_VIEW hand-off puts the URI straight into another validator's import flow.
+     * The migration format carries at most ten entries per link; more than that asks which batch
+     * to send first.
+     */
+    private void shareDeeplink() {
+        List<String> uris = io.blockman.totpull.format.MigrationExporter.toMigrationUris(_entries);
+        if (uris.isEmpty()) {
+            toast(getString(R.string.export_empty));
+            return;
+        }
+        if (uris.size() == 1) {
+            sendDeeplink(uris.get(0));
+            return;
+        }
+        String[] items = new String[uris.size()];
+        for (int i = 0; i < uris.size(); i++) {
+            int from = i * 10 + 1;
+            int to = Math.min((i + 1) * 10, _entries.size());
+            items[i] = getString(R.string.deeplink_batch_item, i + 1, uris.size(), from, to);
+        }
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.deeplink_batch_title)
+                .setItems(items, (d, which) -> sendDeeplink(uris.get(which)))
+                .setNegativeButton(R.string.cancel, null)
+                .show();
+    }
+
+    private void sendDeeplink(String uri) {
+        // Native chooser, nothing excluded: TOTPull itself is always an option (it imports the
+        // link back into the vault), and whatever validators the device has appear alongside.
+        Intent view = new Intent(Intent.ACTION_VIEW, Uri.parse(uri));
+        startActivity(Intent.createChooser(view, getString(R.string.deeplink_pick_title)));
+    }
+
+    /** Shows the migration export as scannable QR code(s), one page per ten entries. */
+    private void showMigrationQrDialog() {
+        List<String> uris = io.blockman.totpull.format.MigrationExporter.toMigrationUris(_entries);
+        if (uris.isEmpty()) {
+            toast(getString(R.string.export_empty));
+            return;
+        }
+        View view = getLayoutInflater().inflate(R.layout.dialog_qr, null);
+        ImageView image = view.findViewById(R.id.qr_image);
+        TextView page = view.findViewById(R.id.qr_page);
+        TextView hint = view.findViewById(R.id.qr_hint);
+        View pager = view.findViewById(R.id.qr_pager);
+
+        com.google.android.material.dialog.MaterialAlertDialogBuilder builder =
+                new MaterialAlertDialogBuilder(this)
+                        .setTitle(R.string.export_qr_title)
+                        .setView(view)
+                        .setPositiveButton(R.string.close, null);
+
+        final androidx.appcompat.app.AlertDialog dialog = builder.create();
+        dialog.show();
+
+        final int[] index = {0};
+        Runnable render = () -> {
+            android.graphics.Bitmap bmp = renderQr(uris.get(index[0]), 720);
+            if (bmp == null) {
+                dialog.dismiss();
+                toast(getString(R.string.export_failed));
+                return;
             }
-            if (title.equals(getString(R.string.entry_menu_edit))) {
-                openEditor(entry.id);
-                return true;
+            image.setImageBitmap(bmp);
+            page.setText(getString(R.string.qr_page, index[0] + 1, uris.size()));
+            hint.setText(uris.size() > 1 ? R.string.qr_hint_multi : R.string.qr_hint);
+        };
+        view.findViewById(R.id.btn_qr_prev).setOnClickListener(v -> {
+            if (index[0] > 0) {
+                index[0]--;
+                render.run();
             }
-            return false;
         });
-        menu.show();
+        view.findViewById(R.id.btn_qr_next).setOnClickListener(v -> {
+            if (index[0] < uris.size() - 1) {
+                index[0]++;
+                render.run();
+            }
+        });
+        pager.setVisibility(uris.size() > 1 ? View.VISIBLE : View.GONE);
+        render.run();
+    }
+
+    /** Renders one QR code; null when the payload is too big for the format. */
+    private android.graphics.Bitmap renderQr(String content, int size) {
+        try {
+            java.util.EnumMap<com.google.zxing.EncodeHintType, Object> hints =
+                    new java.util.EnumMap<>(com.google.zxing.EncodeHintType.class);
+            hints.put(com.google.zxing.EncodeHintType.MARGIN, 1);
+            com.google.zxing.common.BitMatrix matrix = new com.google.zxing.qrcode.QRCodeWriter()
+                    .encode(content, com.google.zxing.BarcodeFormat.QR_CODE, size, size, hints);
+            int width = matrix.getWidth();
+            int[] pixels = new int[width * width];
+            for (int y = 0; y < width; y++) {
+                for (int x = 0; x < width; x++) {
+                    pixels[y * width + x] = matrix.get(x, y)
+                            ? 0xFF000000 : 0xFFFFFFFF;
+                }
+            }
+            android.graphics.Bitmap bmp = android.graphics.Bitmap.createBitmap(
+                    width, width, android.graphics.Bitmap.Config.ARGB_8888);
+            bmp.setPixels(pixels, 0, width, 0, 0, width, width);
+            return bmp;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private void onEntryClicked(TotpEntry entry) {
@@ -671,7 +732,7 @@ public class MainActivity extends AppCompatActivity {
         if (cm != null) {
             cm.setPrimaryClip(ClipData.newPlainText("TOTP", code));
         }
-        _adapter.refreshVisibleCodes(_listView);
+        UiBridge.INSTANCE.notifyDataChanged();
         toast(getString(R.string.copied, TotpGenerator.format(code, entry.isSteam())));
     }
 
@@ -693,6 +754,8 @@ public class MainActivity extends AppCompatActivity {
         List<Integer> actions = new ArrayList<>();
         labels.add(getString(R.string.action_from_app));
         actions.add(0);
+        labels.add(getString(R.string.action_scan));
+        actions.add(4);
         labels.add(getString(R.string.action_paste));
         actions.add(1);
         labels.add(getString(R.string.action_file));
@@ -706,6 +769,9 @@ public class MainActivity extends AppCompatActivity {
                     switch (actions.get(which)) {
                         case 0:
                             showExtractTargets();
+                            break;
+                        case 4:
+                            scanQr();
                             break;
                         case 1:
                             importFromClipboard();
@@ -747,7 +813,7 @@ public class MainActivity extends AppCompatActivity {
         toast(getString(R.string.cap_detecting));
         _lastRootAttempt = System.currentTimeMillis();
         if (firstRun) {
-            showTab(1);
+            UiBridge.INSTANCE.showTab(1);
         }
         new Thread(() -> {
             Capabilities.forgetRoot(this);
@@ -900,8 +966,8 @@ public class MainActivity extends AppCompatActivity {
         new MaterialAlertDialogBuilder(this)
                 .setTitle("Aegis 导入方式")
                 .setItems(new String[]{
-                        "模块直读（无需密码，需先解锁 Aegis）",
-                        "Root 读文件（输入备份密码）",
+                        "模块直读",
+                        "Root 读文件",
                 }, (dialog, which) -> {
                     if (which == 0) {
                         probeViaBroadcast(target);
@@ -934,18 +1000,13 @@ public class MainActivity extends AppCompatActivity {
         }).start();
     }
 
-    /**
-     * Microsoft Authenticator has no Xposed extractor - its OATH seed is a plain Base64 blob in
-     * the PhoneFactor SQLite database. Root is the only transport. Copy the database out, then
-     * parse it on the UI-free worker thread.
-     */
     /** Azure has two transports: module read (no root) or root database read. */
     private void showAzureRouteDialog(ExtractTarget target) {
         new MaterialAlertDialogBuilder(this)
                 .setTitle("Microsoft Authenticator 导入方式")
                 .setItems(new String[]{
-                        "模块直读（免 root，需先把本模块加入它的作用域）",
-                        "Root 读数据库（需 root，无需 Xposed 作用域）",
+                        "模块直读",
+                        "Root 读数据库",
                 }, (dialog, which) -> {
                     if (which == 0) {
                         probeViaBroadcast(target);
@@ -1204,6 +1265,10 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    private void scanQr() {
+        startActivityForResult(new Intent(this, ScanActivity.class), REQ_SCAN);
+    }
+
     private void openFilePicker() {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
@@ -1214,6 +1279,13 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_SCAN && resultCode == RESULT_OK && data != null) {
+            String text = data.getStringExtra(ScanActivity.EXTRA_TEXT);
+            if (text != null && !text.isEmpty()) {
+                applyImport(text);
+            }
+            return;
+        }
         if (requestCode == REQ_OPEN_FILE && resultCode == RESULT_OK
                 && data != null && data.getData() != null) {
             importFromUri(data.getData());
@@ -1361,17 +1433,15 @@ public class MainActivity extends AppCompatActivity {
         startActivity(intent);
     }
 
-    private void updateEmptyState() {
-        boolean filtering = _adapter != null && _adapter.isFiltering();
-        boolean empty = filtering
-                ? _adapter.getVisibleCount() == 0
-                : _entries.isEmpty();
-        _emptyView.setVisibility(empty ? View.VISIBLE : View.GONE);
-        _listView.setVisibility(empty ? View.GONE : View.VISIBLE);
-        TextView title = findViewById(R.id.empty_title);
-        TextView hint = findViewById(R.id.empty_hint);
-        title.setText(filtering ? R.string.empty_filtered_title : R.string.empty_title);
-        hint.setText(filtering ? R.string.empty_filtered_hint : R.string.empty_hint);
+    /**
+     * First launch: land on the info tab and detect privileges instead of popping a dialog.
+     * The tier the user lands in decides which features are even shown from then on.
+     */
+    private void startFirstRun() {
+        UiBridge.INSTANCE.showTab(1);
+        if (!Capabilities.isRootDecided(this)) {
+            detectRoot(true);
+        }
     }
 
     private void toast(String msg) {

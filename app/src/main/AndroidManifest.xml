@@ -3,6 +3,8 @@
 
     <!-- Only used for the "code was read" notification; the app never talks to the network. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- QR scan import -->
+    <uses-permission android:name="android.permission.CAMERA" />
 
 
     <!-- Android 11+ 需要显式声明才能查询/唤起待提取的目标应用 -->
@@ -14,6 +16,15 @@
         <package android:name="com.azure.authenticator" />
         <package android:name="me.weishu.kernelsu" />
         <package android:name="com.topjohnwu.magisk" />
+        <!-- Deep-link export: find validators that accept otpauth / migration URIs. -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="otpauth" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="otpauth-migration" />
+        </intent>
     </queries>
 
     <application
@@ -40,6 +51,14 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="otpauth" />
+            </intent-filter>
+
+            <!-- 批量 deeplink（本应用 / GA 迁移格式分享导出），点击直接进导入 -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="otpauth-migration" />
             </intent-filter>
 
             <!-- 分享纯文本 / 文件进来，直接走 ImportEngine -->
@@ -80,6 +99,12 @@
             android:name=".ui.EditGroupActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
+
+        <activity
+            android:name=".ui.ScanActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:theme="@style/AppTheme" />
 
         <!-- Manifest-declared so the answer still arrives while this app sits in the background
              and the system has frozen its process. A runtime receiver is not seen as live in that

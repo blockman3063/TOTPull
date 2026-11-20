@@ -4,13 +4,23 @@ Pulls the TOTP seed out of an app's encrypted storage on Android, so you can kee
 
 | Source | Package | Code format |
 | --- | --- | --- |
-| Riot Mobile | `com.riotgames.mobile.leagueconnect` | TOTP · SHA-256 · 6 digits · 30 s |
+| Riot Mobile | `com.riotgames.mobile.leagueconnect` | TOTP · SHA-256 · 6 digits · 30 s | 
 | Steam | `com.valvesoftware.android.steam.community` | Steam Guard · 5 characters · 30 s |
 | Google Authenticator | `com.google.android.apps.authenticator2` | TOTP / HOTP · per-entry algorithm and digits |
 | Aegis | `com.beemdevelopment.aegis` | per-entry algorithm and digits |
 | Microsoft Authenticator | `com.azure.authenticator` | TOTP · SHA-1 · 8 digits · 30 s · root only |
 
 Google Authenticator can return dozens of accounts in one answer; the whole batch is folded into the vault with a single write.
+
+## Requirements
+
+- Android 7.0+ (API 24)
+- Any of the source apps installed and signed in
+- An Xposed-compatible loader:
+  - **LSPosed** (root)
+  - **LSPatch** (no root) — patch each source app you want to import from
+
+Scope only the source packages. Do **not** add `io.blockman.totpull` itself: LSPosed rejects `module cannot target itself`, and module readiness is detected from a real answer instead.
 
 ## Why a hook is needed
 
@@ -27,47 +37,19 @@ Riot keeps its seed in `androidx.security` EncryptedSharedPreferences. Steam kee
 
 Google Authenticator v7.2+ stores each signed-in account in `files/accounts/<id>/otp_database.db`; the older global `databases/databases` may be empty. The `secret` column is base64 over an AES/GCM blob (12-byte IV + ciphertext). Its decrypted plaintext is itself a base32 string, sometimes padded with `=` — it must be used directly, not base32-encoded a second time.
 
-## Requirements
+Aegis also offers two transports, and unlike Microsoft's both have prerequisites:
 
-- Android 7.0+ (API 24)
-- Any of the source apps installed and signed in
-- An Xposed-compatible loader:
-  - **LSPosed** (root)
-  - **LSPatch** (no root) — patch each source app you want to import from
+- **模块直读** — the module reads the unlocked vault straight out of the Aegis process. No password needed, but Aegis must be unlocked (vault decrypted in memory) at the moment of import, and the module must be in Aegis's LSPosed scope.
+- **Root 读文件** — TOTPull reads the encrypted `aegis-vault.json` with `su -M` and decrypts it with the vault password you type in. No Xposed scope needed.
 
-Scope only the source packages. Do **not** add `io.blockman.totpull` itself: LSPosed rejects `module cannot target itself`, and module readiness is detected from a real answer instead.
+## Import & export
 
-## Import flow
-
-Tap **从应用导入** (import from app) and pick a source. TOTPull launches it and steps into the background. When the module is ready it announces itself; TOTPull's manifest-declared receiver wakes the frozen process, asks for the seed, saves the entry, and the module brings TOTPull back with a report dialog. If that activity start is blocked, a notification provides the way back.
-
-| Path | Needs root | How |
-| --- | --- | --- |
-| Snapshot | yes | Module writes a sealed snapshot into the source app's private dir; TOTPull reads it through `su` |
-| Broadcast | no | Readiness announcement → probe → answer, all over package-targeted broadcasts |
-
-The broadcast path is complete on its own; root only avoids a round trip. A `su` shell handed to an ordinary app can land in a mount namespace where `/data/data` is unreachable, in which case the snapshot read fails and the broadcast path takes over.
-
-## Browsing codes
-
-Entries are grouped by source app. Tap a group header to fold or unfold it (the chevron points down when open, right when folded). Long-press opens the matching editor directly — no intermediate menu:
-
-- **Entry** — opens the entry editor (rename, secret, parameters; delete lives there too).
-- **Group** — opens the group editor: rename the group label, read its source app / package / entry count / type breakdown, and reach export, re-import from source (only for sources TOTPull knows how to extract from) and delete-group.
-
-The search box matches issuer, name, group, notes and source. The filter dialog offers source and type pickers built from the entries actually in the vault; search and both dimensions AND together. Filtering happens in the list adapter only — the vault is never touched. The subtitle switches to `显示 X / Y 条` while a filter is active.
-
-Imports never de-duplicate: the same secret can exist many times in the vault, whether it came from a file, a share, the clipboard or a source-app probe. Merging twins is a separate, deliberate maintenance operation rather than something an import decides silently.
-
-Tap a code to copy it; long-press an entry to edit or delete it.
-
-## Other imports
-
-Aegis, Bitwarden, FreeOTP, KeePassXC, and Google Authenticator migration URIs are accepted through the share sheet or the add button.
-
-**Aegis supports both export styles.** A plaintext JSON export goes straight through `ImportEngine`. An encrypted backup (vault version 1) is detected by `db` being a base64 string; TOTPull prompts for the backup password, derives the wrapping key with an in-tree RFC 7914 scrypt implementation (no external BouncyCastle dependency — Android's boot classpath ships a trimmed one), unwraps the master key, decrypts the database, and feeds the result through the same plaintext parser. The scrypt code is verified against the RFC test vectors and Python's `hashlib.scrypt`.
-
-Only password slots can be opened. Backups protected solely by Aegis' biometric slot are bound to Aegis' own AndroidKeyStore entry and cannot be decrypted elsewhere — re-export with a password in that case. scrypt runs on a background executor; the password `char[]` is zeroed after use and never persisted.
+- **otpauth 链接** — the whole vault as one `otpauth://` URI per line, plain text. Anything that accepts pasted URIs (Aegis, Stratum, …) can import it.
+- **Aegis JSON** — a plaintext Aegis vault file, importable by Aegis itself.
+- **Deep link** — sends `otpauth-migration://offline?data=…` intents through the system app chooser straight into another validator's import flow. Google's migration protobuf carries at most ten entries per link, so the vault is batched and you pick a batch first. The field numbering follows Google's official schema: `1 secret, 2 name, 3 issuer, 4 algorithm, 5 digits(SIX=1/EIGHT=2), 6 type(HOTP=1/TOTP=2), 7 counter`. Be aware of the ecosystem reality: almost no validator registers a handler for the migration scheme — Google Authenticator and Aegis only read it as QR codes, and TOTPull itself is in the list as a round-trip target.
+- **Google 验证器二维码** — the same migration payloads rendered as QR codes, ten entries per page, scanned by Google Authenticator's import screen.
+- **发送到验证器** (single entry, three-bar menu) — one `otpauth://` deep link handed to the validator of your choice via the system chooser. Validators that never registered the deep-link schemes (notably Google Authenticator) will not appear; use the QR export for those.
+- **扫码导入** (+ menu) — the in-app camera scanner reads single `otpauth://` QR codes and Google migration QR codes (ten-entry batches included), so you can pull entries in from any validator that exports them as images without file or clipboard round-trips.
 
 ## Storage
 
@@ -76,11 +58,6 @@ Entries are written as a single AES/GCM blob (`vault.bin`) in the app's private 
 If the vault ever becomes unreadable, writing is refused rather than overwriting it with an empty list. The contents cannot be recovered, but clearing this app's data from system settings removes the broken file and key and lets you import again. Riot, Steam and Google Authenticator still hold the originals.
 
 On startup the vault is normalised once: secrets that an older build double-encoded are rewritten to canonical base32 so exports and de-duplication use the same value as code generation.
-
-## Status detection
-
-- **Root** — four-state probe (granted / denied / no response / undetected). A timeout is never cached as a denial.
-- **Module** — marked ready only after a source app actually answered a probe, so the indicator reflects a working hook rather than a framework guess.
 
 ## Build
 
