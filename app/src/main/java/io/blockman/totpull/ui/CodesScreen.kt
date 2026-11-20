@@ -186,7 +186,6 @@ fun MainScreen() {
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 if (tab == 0) {
                     CodesPage()
-                    AddFab(Modifier.align(Alignment.BottomEnd).padding(20.dp))
                 } else {
                     InfoPageHost()
                 }
@@ -197,6 +196,16 @@ fun MainScreen() {
         // The dragged card floats here - above the bottom bar and outside the list's
         // clip, so it stays visible wherever the finger goes.
         DragOverlay()
+
+        // Above the overlay on purpose: the floating card passes UNDER the + button.
+        // The bar is 1dp hairline + 58dp row, hence the 79dp bottom inset.
+        if (tab == 0) {
+            AddFab(
+                Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 20.dp, bottom = 79.dp)
+            )
+        }
     }
 }
 
