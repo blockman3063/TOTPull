@@ -2,15 +2,17 @@
 
 Pulls the TOTP seed out of an app's encrypted storage on Android, so you can keep generating your own two-factor codes after switching devices or uninstalling the client.
 
-| Source | Package | Code format |
-| --- | --- | --- |
-| Riot Mobile | `com.riotgames.mobile.leagueconnect` | TOTP · SHA-256 · 6 digits · 30 s | 
-| Steam | `com.valvesoftware.android.steam.community` | Steam Guard · 5 characters · 30 s |
-| Google Authenticator | `com.google.android.apps.authenticator2` | TOTP / HOTP · per-entry algorithm and digits |
-| Aegis | `com.beemdevelopment.aegis` | per-entry algorithm and digits |
-| Microsoft Authenticator | `com.azure.authenticator` | TOTP · SHA-1 · 8 digits · 30 s · root only |
+| App | Root 导入 | Root 导出 | Xposed 导入 | Xposed 导出 | 无特权 导入 | 无特权 导出 |
+| --- | :-: | :-: | :-: | :-: | :-: | :-: |
+| Riot Mobile<br>`com.riotgames.mobile.leagueconnect` | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ |
+| Steam<br>`com.valvesoftware.android.steam.community` | ❌ | ❌ | ✅ | ❌ | ✅ maFile | ❌ |
+| Google Authenticator<br>`com.google.android.apps.authenticator2` | ❌ | — | ✅ | — | ✅ QR | ✅ QR |
+| Aegis<br>`com.beemdevelopment.aegis` | ✅ 密码 | — | ✅ 解锁 | — | ✅ JSON | ✅ |
+| Microsoft Authenticator<br>`com.azure.authenticator` | ✅ | — | ✅ | — | ❌ | ❌ |
+| Bitwarden<br>`com.x8bit.bitwarden` | — | — | — | — | ✅ | ⚠️ |
+| Stratum<br>`com.stratumauth.app` | — | — | — | — | ✅ | ✅ steam |
 
-Google Authenticator can return dozens of accounts in one answer; the whole batch is folded into the vault with a single write.
+`✅` 已完美适配 · `⚠️` 可用但需注意（Bitwarden 的 Steam 方言 deeplink 导入为错码，steamguard-cli#468） · `❌` 目标应用自身限制导致不可用（keystore 加密密文离进程无法解密 / 客户端不提供导入导出功能） · `—` 本软件尚未实现
 
 ## Requirements
 
