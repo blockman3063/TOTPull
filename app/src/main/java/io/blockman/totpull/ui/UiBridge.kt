@@ -6,6 +6,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.ui.unit.dp
 import io.blockman.totpull.TotpEntry
 
 /**
@@ -167,6 +168,12 @@ class DragVisualState {
 
     /** The list container's top edge in root coordinates (overlay placement). */
     var containerTopInRoot by mutableFloatStateOf(0f)
+
+    /**
+     * Top padding of the dragged item's list wrapper (4dp for the first row, else 0).
+     * The overlay must mirror it or the handover after the fly-back jumps vertically.
+     */
+    var overlayTopPad by mutableStateOf(0.dp)
 
     /**
      * Card offset relative to its final slot at release time; the in-list card springs

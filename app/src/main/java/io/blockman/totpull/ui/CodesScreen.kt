@@ -254,7 +254,7 @@ private fun DragOverlay() {
         Box(
             Modifier
                 .fillMaxWidth()
-                .padding(start = 14.dp, end = 14.dp, top = 4.dp)
+                .padding(start = 14.dp, end = 14.dp, top = drag.overlayTopPad)
         ) {
             EntryCard(entry, now, drag, drag.overlayHue, isFloating = true)
         }
@@ -421,6 +421,10 @@ private fun CodesPage() {
                     dragVisual.lastFingerY = listY
                     dragVisual.overlayEntry = row.entry
                     dragVisual.overlayHue = row.hue
+                    // Mirror the wrapper's top padding so the fly-back lands exactly
+                    // where the in-list card sits (first row gets 4dp, the rest 0).
+                    dragVisual.overlayTopPad =
+                        if (info.index == 0) 4.dp else 0.dp
                 }
                 ok
             }
