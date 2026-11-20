@@ -32,10 +32,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Size
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
@@ -71,6 +72,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
+import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.theme.darkColorScheme
@@ -647,15 +649,23 @@ private fun EntryCard(
             )
         }
         if (entry.isSupported() && !entry.isHotp()) {
-            LinearProgressIndicator(
-                progress = { TotpGenerator.progressLeft(entry.period, now) / 1000f },
-                modifier = Modifier
+            val progress = TotpGenerator.progressLeft(entry.period, now) / 1000f
+            val fillColor = MiuixTheme.colorScheme.primary
+            val trackColor = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+            Canvas(
+                Modifier
                     .padding(start = 14.dp, end = 14.dp, bottom = 10.dp)
                     .fillMaxWidth()
-                    .height(3.dp),
-                color = MiuixTheme.colorScheme.primary,
-                trackColor = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.12f)
-            )
+                    .height(3.dp)
+            ) {
+                val radius = CornerRadius(size.height / 2f, size.height / 2f)
+                drawRoundRect(trackColor, cornerRadius = radius)
+                drawRoundRect(
+                    fillColor,
+                    size = Size(size.width * progress.coerceIn(0f, 1f), size.height),
+                    cornerRadius = radius
+                )
+            }
         }
     }
 }
