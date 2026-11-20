@@ -456,6 +456,11 @@ private fun CodesPage() {
 
             LazyColumn(
                 state = listState,
+                // User scrolling is off while a card is dragged or flying back: the
+                // fly-back target was computed at release time, so a second finger
+                // scrolling the list meanwhile would land the card somewhere else
+                // than its slot. Programmatic edge auto-scroll is unaffected.
+                userScrollEnabled = dragVisual.activeKey == null && !dragVisual.settling,
                 modifier = Modifier
                     .fillMaxSize()
                     .onGloballyPositioned { coords ->
