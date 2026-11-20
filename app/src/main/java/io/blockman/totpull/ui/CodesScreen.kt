@@ -747,7 +747,11 @@ private fun EntryCard(
                 Modifier
                     .weight(1f)
                     .fillMaxHeight()
+                    // Disabled while this card is dragged (or flying back): the finger
+                    // holding the handle must never fire tap/long-press on the body -
+                    // a stray tap would copy a code or advance a HOTP counter.
                     .combinedClickable(
+                        enabled = !dragging,
                         onClick = { UiBridge.host?.onEntryTap(entry) },
                         onLongClick = { UiBridge.host?.onEntryEdit(entry) }
                     ),
@@ -874,6 +878,12 @@ private fun DragHandle(entry: TotpEntry, modifier: Modifier) {
                 awaitPointerEventScope {
                     while (true) {
                         val down = awaitFirstDown(requireUnconsumed = false)
+                        // While a drag is in flight anywhere in the list, handle taps
+                        // are dead: the active pointer belongs to the drag, and events
+                        // surfacing here are stale echoes, not real taps.
+                        if (UiBridge.drag.activeKey != null) {
+                            continue
+                        }
                         // Quick tap -> share menu. A long press ends the wait with null and is
                         // owned by the list-level drag handler, so nothing happens here; a
                         // scroll stealing the pointer also ends with null (consumed).
