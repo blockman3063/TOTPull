@@ -98,19 +98,22 @@ private sealed class CodesRow
 private class HeaderRow(val key: String, val title: String, val count: Int, val collapsed: Boolean, val hue: Float) : CodesRow()
 
 /** One code card. */
-private class EntryRow(val entry: TotpEntry, val hue: Float) : CodesRow()
+private class EntryRow(val entry: TotpEntry) : CodesRow()
 
-// Soft per-source hues: every validator app gets a stable, low-saturation tint so groups
-// are distinguishable at a glance without leaving the theme's overall feel.
+// Soft per-source hues: every validator app gets a stable accent for its group dot.
 private val GROUP_HUES = floatArrayOf(212f, 145f, 28f, 262f, 330f, 185f, 95f, 8f, 45f, 240f)
 
 private fun groupHue(key: String): Float {
     return GROUP_HUES[Math.floorMod(key.hashCode(), GROUP_HUES.size)]
 }
 
-/** Faint card tint: barely saturated in light theme, a whisper in dark. */
-private fun groupTint(hue: Float, dark: Boolean): Color {
-    return Color.hsl(hue, if (dark) 0.30f else 0.45f, if (dark) 0.17f else 0.95f)
+/**
+ * One uniform card tone for every card: a neutral, slightly cool surface that exists
+ * only to lift the cards off the page background - light theme reads as clean white
+ * cards on grey, dark theme as charcoal-blue cards on near-black.
+ */
+private fun cardTint(dark: Boolean): Color {
+    return Color.hsl(215f, if (dark) 0.14f else 0.30f, if (dark) 0.16f else 0.98f)
 }
 
 /** Saturated accent for the group header dot. */
@@ -256,7 +259,7 @@ private fun DragOverlay() {
                 .fillMaxWidth()
                 .padding(start = 14.dp, end = 14.dp, top = drag.overlayTopPad)
         ) {
-            EntryCard(entry, now, drag, drag.overlayHue, isFloating = true)
+            EntryCard(entry, now, drag, isFloating = true)
         }
     }
 }
@@ -420,7 +423,6 @@ private fun CodesPage() {
                     dragVisual.baseOffset = info!!.offset.toFloat()
                     dragVisual.lastFingerY = listY
                     dragVisual.overlayEntry = row.entry
-                    dragVisual.overlayHue = row.hue
                     // Mirror the wrapper's top padding so the fly-back lands exactly
                     // where the in-list card sits (first row gets 4dp, the rest 0).
                     dragVisual.overlayTopPad =
@@ -487,7 +489,7 @@ private fun CodesPage() {
                     ) {
                         when (row) {
                             is HeaderRow -> GroupHeader(row)
-                            is EntryRow -> EntryCard(row.entry, now, dragVisual, row.hue)
+                            is EntryRow -> EntryCard(row.entry, now, dragVisual)
                         }
                     }
                 }
@@ -538,7 +540,7 @@ private fun buildRows(
         rows.add(HeaderRow(key, title, bucket.size, isCollapsed, hue))
         if (!isCollapsed) {
             for (entry in bucket) {
-                rows.add(EntryRow(entry, hue))
+                rows.add(EntryRow(entry))
             }
         }
     }
@@ -686,7 +688,6 @@ private fun EntryCard(
     entry: TotpEntry,
     now: Long,
     dragVisual: DragVisualState,
-    hue: Float,
     isFloating: Boolean = false
 ) {
     val itemKey = "e:" + entry.id
@@ -736,7 +737,7 @@ private fun EntryCard(
                 shape = RoundedCornerShape(16.dp)
             ),
         cornerRadius = 16.dp,
-        colors = CardDefaults.defaultColors(color = groupTint(hue, dark))
+        colors = CardDefaults.defaultColors(color = cardTint(dark))
     ) {
         Row(
             Modifier

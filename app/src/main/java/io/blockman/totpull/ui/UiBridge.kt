@@ -162,9 +162,8 @@ class DragVisualState {
      */
     var lastFingerY by mutableFloatStateOf(-1f)
 
-    /** Entry being dragged and its group hue, for the floating overlay card. */
+    /** Entry being dragged, for the floating overlay card. */
     var overlayEntry by mutableStateOf<TotpEntry?>(null)
-    var overlayHue by mutableFloatStateOf(0f)
 
     /** The list container's top edge in root coordinates (overlay placement). */
     var containerTopInRoot by mutableFloatStateOf(0f)
