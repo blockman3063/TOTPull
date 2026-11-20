@@ -57,11 +57,11 @@ validator speaks a different dialect:
 
 - `otpauth://steam/...` — what TOTPull exports; understood by Stratum (Authenticator Pro) and TOTPull itself. Bitwarden's parser ignores this host, so it never appears in the chooser.
 - `otpauth://totp/Steam:...&issuer=Steam` — the common convention (Aegis exports this), but Bitwarden imports it **wrong**: the generated code comes out numeric instead of Steam's alphanumeric 5-character set (unfixed as of 2026-06, steamguard-cli#468). KeePassXC/gopass additionally want an `encoder=steam` parameter Bitwarden ignores.
-- `steam://SECRET` — Bitwarden's only correct Steam entry point; a hand-typed prefix in its key field, **not** a deeplink scheme.
-
-So for Steam entries the three-bar menu offers **复制 Bitwarden 密钥**: it puts
-`steam://<secret>` on the clipboard for pasting into Bitwarden's authenticator
-key field. The deep-link item still works for Stratum-style validators.
+- `steam://SECRET` — Bitwarden's only Steam format. The **Bitwarden Authenticator**
+  app reads it (the password-manager app itself dropped the hand-typed field), so for
+  Bitwarden the three-bar menu offers **复制 Bitwarden Authenticator 密钥**: it puts
+  `steam://<secret>` on the clipboard for pasting/importing there. The deep-link item
+  still works for Stratum-style validators.
 - **扫码导入** (+ menu) — the in-app camera scanner reads single `otpauth://` QR codes and Google migration QR codes (ten-entry batches included), so you can pull entries in from any validator that exports them as images without file or clipboard round-trips.
 
 ## Storage
