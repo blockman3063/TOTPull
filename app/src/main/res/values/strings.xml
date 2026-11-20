@@ -28,6 +28,8 @@
     <string name="entry_menu_share_code">分享验证码</string>
     <string name="entry_menu_share_uri">分享 otpauth 链接</string>
     <string name="entry_menu_deeplink">发送到验证器</string>
+    <string name="entry_menu_bw_secret">复制 Bitwarden 密钥</string>
+    <string name="steam_secret_copied">已复制 steam:// 密钥，粘贴到 Bitwarden 的验证器密钥字段</string>
     <string name="action_scan">扫码导入</string>
     <string name="scan_prompt">将二维码放入取景框</string>
     <string name="nothing_in_clipboard">剪贴板里没有 otpauth 链接</string>

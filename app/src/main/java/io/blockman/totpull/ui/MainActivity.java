@@ -508,28 +508,52 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
      */
     private void showEntryMenu(TotpEntry entry) {
         String code = entry.isSupported() ? TotpGenerator.generate(entry) : "";
-        String[] items = {
-                getString(R.string.entry_menu_share_code),
-                getString(R.string.entry_menu_share_uri),
-                getString(R.string.entry_menu_deeplink),
-        };
+        List<String> labels = new ArrayList<>();
+        List<Integer> actions = new ArrayList<>();
+        labels.add(getString(R.string.entry_menu_share_code));
+        actions.add(0);
+        labels.add(getString(R.string.entry_menu_share_uri));
+        actions.add(1);
+        labels.add(getString(R.string.entry_menu_deeplink));
+        actions.add(2);
+        if (entry.isSteam()) {
+            // Bitwarden cannot import Steam through any otpauth deeplink: its parser
+            // ignores the otpauth://steam host, and otpauth://totp with issuer=Steam
+            // yields WRONG numeric codes. Its only Steam entry point is a hand-typed
+            // steam://SECRET in the key field, so offer that exact text for pasting.
+            labels.add(getString(R.string.entry_menu_bw_secret));
+            actions.add(3);
+        }
         new MaterialAlertDialogBuilder(this)
                 .setTitle(entry.displayName())
-                .setItems(items, (d, which) -> {
-                    if (which == 0) {
+                .setItems(labels.toArray(new String[0]), (d, which) -> {
+                    int action = actions.get(which);
+                    if (action == 0) {
                         String account = entry.displayAccount();
                         String subject = account.isEmpty() || account.equals(entry.displayName())
                                 ? entry.displayName() : entry.displayName() + " · " + account;
                         shareText(subject, code.isEmpty() ? "----"
                                 : TotpGenerator.format(code, entry.isSteam()));
-                    } else if (which == 1) {
+                    } else if (action == 1) {
                         shareText(entry.displayName(), entry.toOtpauthUri());
-                    } else {
+                    } else if (action == 2) {
                         // Hand the single otpauth URI straight to another validator app.
                         sendDeeplink(entry.toOtpauthUri());
+                    } else {
+                        copySteamSecret(entry);
                     }
                 })
                 .show();
+    }
+
+    /** Puts the Bitwarden-style steam:// key on the clipboard for manual pasting. */
+    private void copySteamSecret(TotpEntry entry) {
+        ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+        if (cm != null) {
+            cm.setPrimaryClip(ClipData.newPlainText("TOTP",
+                    "steam://" + TotpGenerator.canonicalSecret(entry.secret)));
+        }
+        toast(getString(R.string.steam_secret_copied));
     }
 
     private void shareText(String subject, String text) {
