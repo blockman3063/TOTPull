@@ -197,6 +197,13 @@ class DragVisualState {
         overlayEntry = null
     }
 
+    /**
+     * FAB animation phase: true from drag start, false the moment the finger lifts —
+     * the pop-back starts at release, NOT when the fly-back finishes. Interaction
+     * locking uses [settling] / [activeKey] separately and still ends at the handover.
+     */
+    var fabGone by mutableStateOf(false)
+
     // Installed by CodesPage; invoked from the root-level gesture in MainScreen.
     var probe: (x: Float, y: Float) -> Boolean = { _, _ -> false }
     var moved: (dy: Float, y: Float) -> Unit = { _, _ -> }

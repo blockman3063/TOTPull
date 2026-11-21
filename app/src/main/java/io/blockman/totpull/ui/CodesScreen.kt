@@ -433,6 +433,7 @@ private fun CodesPage() {
                     dragVisual.baseOffset = info!!.offset.toFloat()
                     dragVisual.lastFingerY = listY
                     dragVisual.overlayEntry = row.entry
+                    dragVisual.fabGone = true
                     // Mirror the wrapper's top padding so the fly-back lands exactly
                     // where the in-list card sits (first row gets 4dp, the rest 0).
                     dragVisual.overlayTopPad =
@@ -451,10 +452,12 @@ private fun CodesPage() {
                 if (dragVisual.activeKey != null) {
                     // Keep the floating card on screen and let it fly back into the slot
                     // (settling); only then does it hand over to the in-list twin, which
-                    // sits in the final slot already (releaseOffset 0 = no jump).
+                    // sits in the final slot already (releaseOffset 0 = no jump). The FAB
+                    // pop-back starts right here at finger-up, not at the handover.
                     dragVisual.releaseOffset = 0f
                     dragVisual.settling = true
                     dragVisual.lastFingerY = -1f
+                    dragVisual.fabGone = false
                     UiBridge.host?.persistOrder()
                 }
             }
@@ -978,16 +981,17 @@ private fun EmptyView(filtering: Boolean) {
 @Composable
 private fun AddFab(modifier: Modifier) {
     val drag = UiBridge.drag
-    // Shrinks into nothing while a card is dragged or flying back, pops back with a
-    // little overshoot once the handover is done. Center-anchored scale, and the tap
-    // dies with the visual - no invisible button left behind.
-    val busy = drag.activeKey != null || drag.settling
+    // Shrinks into nothing the moment a drag starts, pops back with a little
+    // overshoot the moment the finger LIFTS (not when the fly-back lands).
+    // Center-anchored scale; the tap stays dead until the handover is done.
+    val gone = drag.fabGone
+    val locked = drag.activeKey != null || drag.settling
     val scale = remember { Animatable(1f) }
-    LaunchedEffect(busy) {
+    LaunchedEffect(gone) {
         when {
-            busy && scale.value > 0f ->
+            gone && scale.value > 0f ->
                 scale.animateTo(0f, tween(150))
-            !busy && scale.value < 1f ->
+            !gone && scale.value < 1f ->
                 scale.animateTo(
                     1f,
                     spring(
@@ -1008,7 +1012,7 @@ private fun AddFab(modifier: Modifier) {
             }
             .clip(CircleShape)
             .background(MiuixTheme.colorScheme.primary)
-            .clickable(enabled = !busy) { UiBridge.host?.onAdd() },
+            .clickable(enabled = !locked) { UiBridge.host?.onAdd() },
         contentAlignment = Alignment.Center
     ) {
         Text(
