@@ -80,6 +80,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.withFrameNanos
@@ -1034,6 +1035,35 @@ private fun AddFab(modifier: Modifier) {
     val gone = drag.fabGone
     val locked = drag.activeKey != null || drag.settling
     val scale = remember { Animatable(1f) }
+    // Same press feedback as the cards: shrink on hold, shoot past rest on release.
+    val fabInteraction = remember { MutableInteractionSource() }
+    val pressScale = remember { Animatable(1f) }
+    LaunchedEffect(fabInteraction) {
+        fabInteraction.interactions.collect { interaction ->
+            when (interaction) {
+                is PressInteraction.Press ->
+                    pressScale.animateTo(0.9f, tween(100))
+                is PressInteraction.Release -> {
+                    pressScale.animateTo(1.06f, tween(130))
+                    pressScale.animateTo(
+                        1f,
+                        spring(
+                            dampingRatio = Spring.DampingRatioMediumBouncy,
+                            stiffness = Spring.StiffnessMediumLow
+                        )
+                    )
+                }
+                is PressInteraction.Cancel ->
+                    pressScale.animateTo(
+                        1f,
+                        spring(
+                            dampingRatio = Spring.DampingRatioNoBouncy,
+                            stiffness = Spring.StiffnessMedium
+                        )
+                    )
+            }
+        }
+    }
     LaunchedEffect(gone) {
         when {
             gone && scale.value > 0f ->
@@ -1052,14 +1082,18 @@ private fun AddFab(modifier: Modifier) {
         modifier = modifier
             .size(56.dp)
             .graphicsLayer {
-                val s = scale.value
+                val s = scale.value * pressScale.value
                 scaleX = s
                 scaleY = s
                 alpha = if (s < 0.05f) 0f else 1f
             }
             .clip(CircleShape)
             .background(MiuixTheme.colorScheme.primary)
-            .clickable(enabled = !locked) { UiBridge.host?.onAdd() },
+            .clickable(
+                interactionSource = fabInteraction,
+                indication = LocalIndication.current,
+                enabled = !locked
+            ) { UiBridge.host?.onAdd() },
         contentAlignment = Alignment.Center
     ) {
         Text(
