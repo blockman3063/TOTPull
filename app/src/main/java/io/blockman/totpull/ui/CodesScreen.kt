@@ -58,6 +58,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.draw.alpha
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.unit.IntOffset
 import kotlin.math.roundToInt
@@ -721,13 +723,17 @@ private fun EntryCard(
     // in-list card reappears at releaseOffset (where the overlay was), springing back
     // into its slot - one continuous motion across both layers.
     val settle = remember { Animatable(Float.NaN) }
-    // Tap feedback: a quick swell-and-spring on every body tap (copy / HOTP++).
-    val pop = remember { Animatable(1f) }
-    val popScope = rememberCoroutineScope()
-    fun popBounce() {
-        popScope.launch {
-            pop.animateTo(1.04f, tween(90))
-            pop.animateTo(
+    // Press feedback: shrink while the finger is down, then over-spring past rest
+    // and settle on release. Driven by the interaction source, so it tracks the
+    // finger instead of firing after the fact.
+    val pressInteraction = remember { MutableInteractionSource() }
+    val pressed by pressInteraction.collectIsPressedAsState()
+    val pressScale = remember { Animatable(1f) }
+    LaunchedEffect(pressed) {
+        if (pressed) {
+            pressScale.animateTo(0.96f, tween(120))
+        } else if (pressScale.value < 1f) {
+            pressScale.animateTo(
                 1f,
                 spring(
                     dampingRatio = Spring.DampingRatioMediumBouncy,
@@ -763,13 +769,13 @@ private fun EntryCard(
                     val rest = dragVisual.settleProgress
                     shadowElevation = 24f - 16f * rest
                     val base = 1.03f - 0.03f * rest
-                    scaleX = base * pop.value
-                    scaleY = base * pop.value
+                    scaleX = base * pressScale.value
+                    scaleY = base * pressScale.value
                 } else {
                     shadowElevation = if (dragging) 24f else 8f
                     translationY = if (settle.value.isNaN()) 0f else settle.value
-                    scaleX = pop.value
-                    scaleY = pop.value
+                    scaleX = pressScale.value
+                    scaleY = pressScale.value
                 }
             }
             .border(
@@ -793,11 +799,9 @@ private fun EntryCard(
                     // holding the handle must never fire tap/long-press on the body -
                     // a stray tap would copy a code or advance a HOTP counter.
                     .combinedClickable(
+                        interactionSource = pressInteraction,
                         enabled = !dragging,
-                        onClick = {
-                            popBounce()
-                            UiBridge.host?.onEntryTap(entry)
-                        },
+                        onClick = { UiBridge.host?.onEntryTap(entry) },
                         onLongClick = { UiBridge.host?.onEntryEdit(entry) }
                     ),
                 verticalAlignment = Alignment.CenterVertically
