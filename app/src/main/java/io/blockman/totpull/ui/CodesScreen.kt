@@ -738,8 +738,11 @@ private fun EntryCard(
             when (interaction) {
                 is PressInteraction.Press ->
                     pressScale.animateTo(0.96f, tween(100))
-                is PressInteraction.Release -> {
-                    pressScale.snapTo(0.96f)
+                is PressInteraction.Release ->
+                    // No snap-to-pressed here on purpose: a quick tap releases while
+                    // the shrink is mid-flight, so the spring starts from wherever the
+                    // scale actually is - short travel, mild overshoot. A long hold has
+                    // the full 0.96 compressed and gets the full over-spring.
                     pressScale.animateTo(
                         1f,
                         spring(
@@ -747,7 +750,6 @@ private fun EntryCard(
                             stiffness = Spring.StiffnessMedium
                         )
                     )
-                }
                 is PressInteraction.Cancel ->
                     pressScale.animateTo(
                         1f,
