@@ -732,7 +732,11 @@ private fun EntryCard(
     LaunchedEffect(pressed) {
         if (pressed) {
             pressScale.animateTo(0.96f, tween(120))
-        } else if (pressScale.value < 1f) {
+        } else if (pressScale.value != 1f) {
+            // A 1-frame tap cancels the shrink mid-flight; guaranteeing the spring
+            // always launches from the fully-pressed scale gives quick taps the
+            // same overshoot as long holds.
+            pressScale.snapTo(0.96f)
             pressScale.animateTo(
                 1f,
                 spring(
