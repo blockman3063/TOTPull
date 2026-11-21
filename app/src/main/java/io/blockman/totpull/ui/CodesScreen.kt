@@ -59,7 +59,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.draw.alpha
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.unit.IntOffset
 import kotlin.math.roundToInt
@@ -727,23 +727,36 @@ private fun EntryCard(
     // and settle on release. Driven by the interaction source, so it tracks the
     // finger instead of firing after the fact.
     val pressInteraction = remember { MutableInteractionSource() }
-    val pressed by pressInteraction.collectIsPressedAsState()
     val pressScale = remember { Animatable(1f) }
-    LaunchedEffect(pressed) {
-        if (pressed) {
-            pressScale.animateTo(0.96f, tween(120))
-        } else if (pressScale.value != 1f) {
-            // A 1-frame tap cancels the shrink mid-flight; guaranteeing the spring
-            // always launches from the fully-pressed scale gives quick taps the
-            // same overshoot as long holds.
-            pressScale.snapTo(0.96f)
-            pressScale.animateTo(
-                1f,
-                spring(
-                    dampingRatio = Spring.DampingRatioMediumBouncy,
-                    stiffness = Spring.StiffnessMedium
-                )
-            )
+    // Collect the interaction stream directly: collectIsPressedAsState misses
+    // one-frame taps entirely (down and up land in the same compose frame, so the
+    // pressed=true recomposition never happens). Per-event collection guarantees
+    // every Press runs its shrink and every Release its over-spring; a fast tap
+    // simply queues the Release behind the shrink instead of skipping both.
+    LaunchedEffect(pressInteraction) {
+        pressInteraction.interactions.collect { interaction ->
+            when (interaction) {
+                is PressInteraction.Press ->
+                    pressScale.animateTo(0.96f, tween(100))
+                is PressInteraction.Release -> {
+                    pressScale.snapTo(0.96f)
+                    pressScale.animateTo(
+                        1f,
+                        spring(
+                            dampingRatio = Spring.DampingRatioMediumBouncy,
+                            stiffness = Spring.StiffnessMedium
+                        )
+                    )
+                }
+                is PressInteraction.Cancel ->
+                    pressScale.animateTo(
+                        1f,
+                        spring(
+                            dampingRatio = Spring.DampingRatioNoBouncy,
+                            stiffness = Spring.StiffnessMedium
+                        )
+                    )
+            }
         }
     }
     var wasDragging by remember { mutableStateOf(false) }
