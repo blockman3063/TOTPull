@@ -6,6 +6,7 @@ import android.view.LayoutInflater
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -644,6 +645,9 @@ private fun GroupHeader(row: HeaderRow) {
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .combinedClickable(
+                // Fold/expand and group editing are dead while a card is dragged or
+                // flying back - the drag finger must never trigger a header action.
+                enabled = UiBridge.drag.activeKey == null && !UiBridge.drag.settling,
                 onClick = { toggleCollapse(row.key) },
                 onLongClick = { UiBridge.host?.onGroupEdit(row.key) }
             )
@@ -973,12 +977,38 @@ private fun EmptyView(filtering: Boolean) {
 
 @Composable
 private fun AddFab(modifier: Modifier) {
+    val drag = UiBridge.drag
+    // Shrinks into nothing while a card is dragged or flying back, pops back with a
+    // little overshoot once the handover is done. Center-anchored scale, and the tap
+    // dies with the visual - no invisible button left behind.
+    val busy = drag.activeKey != null || drag.settling
+    val scale = remember { Animatable(1f) }
+    LaunchedEffect(busy) {
+        when {
+            busy && scale.value > 0f ->
+                scale.animateTo(0f, tween(150))
+            !busy && scale.value < 1f ->
+                scale.animateTo(
+                    1f,
+                    spring(
+                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                        stiffness = Spring.StiffnessMediumLow
+                    )
+                )
+        }
+    }
     Box(
         modifier = modifier
             .size(56.dp)
+            .graphicsLayer {
+                val s = scale.value
+                scaleX = s
+                scaleY = s
+                alpha = if (s < 0.05f) 0f else 1f
+            }
             .clip(CircleShape)
             .background(MiuixTheme.colorScheme.primary)
-            .clickable { UiBridge.host?.onAdd() },
+            .clickable(enabled = !busy) { UiBridge.host?.onAdd() },
         contentAlignment = Alignment.Center
     ) {
         Text(
