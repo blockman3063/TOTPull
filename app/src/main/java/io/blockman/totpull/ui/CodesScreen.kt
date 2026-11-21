@@ -76,8 +76,10 @@ import io.blockman.totpull.TotpEntry
 import io.blockman.totpull.TotpGenerator
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.platform.LocalDensity
 import top.yukonga.miuix.kmp.basic.Card
@@ -719,6 +721,21 @@ private fun EntryCard(
     // in-list card reappears at releaseOffset (where the overlay was), springing back
     // into its slot - one continuous motion across both layers.
     val settle = remember { Animatable(Float.NaN) }
+    // Tap feedback: a quick swell-and-spring on every body tap (copy / HOTP++).
+    val pop = remember { Animatable(1f) }
+    val popScope = rememberCoroutineScope()
+    fun popBounce() {
+        popScope.launch {
+            pop.animateTo(1.04f, tween(90))
+            pop.animateTo(
+                1f,
+                spring(
+                    dampingRatio = Spring.DampingRatioMediumBouncy,
+                    stiffness = Spring.StiffnessMedium
+                )
+            )
+        }
+    }
     var wasDragging by remember { mutableStateOf(false) }
     val dark = isSystemInDarkTheme()
     LaunchedEffect(dragging) {
@@ -745,11 +762,14 @@ private fun EntryCard(
                     // Fly-back progress blends the "lifted" look back to resting.
                     val rest = dragVisual.settleProgress
                     shadowElevation = 24f - 16f * rest
-                    scaleX = 1.03f - 0.03f * rest
-                    scaleY = scaleX
+                    val base = 1.03f - 0.03f * rest
+                    scaleX = base * pop.value
+                    scaleY = base * pop.value
                 } else {
                     shadowElevation = if (dragging) 24f else 8f
                     translationY = if (settle.value.isNaN()) 0f else settle.value
+                    scaleX = pop.value
+                    scaleY = pop.value
                 }
             }
             .border(
@@ -774,7 +794,10 @@ private fun EntryCard(
                     // a stray tap would copy a code or advance a HOTP counter.
                     .combinedClickable(
                         enabled = !dragging,
-                        onClick = { UiBridge.host?.onEntryTap(entry) },
+                        onClick = {
+                            popBounce()
+                            UiBridge.host?.onEntryTap(entry)
+                        },
                         onLongClick = { UiBridge.host?.onEntryEdit(entry) }
                     ),
                 verticalAlignment = Alignment.CenterVertically
