@@ -738,18 +738,19 @@ private fun EntryCard(
             when (interaction) {
                 is PressInteraction.Press ->
                     pressScale.animateTo(0.96f, tween(100))
-                is PressInteraction.Release ->
-                    // No snap-to-pressed here on purpose: a quick tap releases while
-                    // the shrink is mid-flight, so the spring starts from wherever the
-                    // scale actually is - short travel, mild overshoot. A long hold has
-                    // the full 0.96 compressed and gets the full over-spring.
+                is PressInteraction.Release -> {
+                    // The natural spring overshoot over such a short travel is
+                    // invisible (~0.3%), so the over-swing is explicit: shoot past
+                    // rest to 1.03 - bigger than the resting size - then settle.
+                    pressScale.animateTo(1.03f, tween(130))
                     pressScale.animateTo(
                         1f,
                         spring(
                             dampingRatio = Spring.DampingRatioMediumBouncy,
-                            stiffness = Spring.StiffnessMedium
+                            stiffness = Spring.StiffnessMediumLow
                         )
                     )
+                }
                 is PressInteraction.Cancel ->
                     pressScale.animateTo(
                         1f,
