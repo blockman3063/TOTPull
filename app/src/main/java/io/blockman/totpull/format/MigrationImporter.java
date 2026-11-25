@@ -40,9 +40,19 @@ public final class MigrationImporter {
             return result;
         }
 
+        // Google Authenticator encodes the payload with the URL-safe alphabet (- and _),
+        // Android's Base64.DEFAULT rejects both and throws. Normalize to the standard
+        // alphabet and restore the padding so either encoding decodes.
+        String normalized = dataParam.replace('-', '+').replace('_', '/');
+        int rem = normalized.length() % 4;
+        if (rem == 2) {
+            normalized += "==";
+        } else if (rem == 3) {
+            normalized += "=";
+        }
         byte[] payload;
         try {
-            payload = Base64.decode(dataParam, Base64.DEFAULT);
+            payload = Base64.decode(normalized, Base64.DEFAULT);
         } catch (Exception e) {
             return result;
         }

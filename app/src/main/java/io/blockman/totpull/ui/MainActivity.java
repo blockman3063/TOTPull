@@ -467,7 +467,25 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
         }
     }
 
+    /** Single-entry imports (deeplinks, module snapshots) also confirm through the manager. */
     private void addEntry(TotpEntry entry) {
+        String source = entry.displaySource();
+        if (source.isEmpty()) {
+            source = getString(R.string.local_source);
+        }
+        List<TotpEntry> single = new ArrayList<>();
+        single.add(entry);
+        TransferManagerDialog.show(this, getString(R.string.transfer_import_title),
+                getString(R.string.transfer_summary_import, 1, source),
+                single, false, selected -> {
+                    if (!selected.isEmpty()) {
+                        insertEntry(entry);
+                    }
+                });
+    }
+
+    /** Previous addEntry body: adopt matching hand-added rows, then append and save. */
+    private void insertEntry(TotpEntry entry) {
         List<TotpEntry> current = _store.load();
 
         // An entry the user added by hand earlier can be the same code we just pulled from an
@@ -500,6 +518,17 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
         _store.save(current);
         reload();
         toast(getString(R.string.imported, 1));
+    }
+
+    /** Groups the entries' sources into one short line for the manager header. */
+    private String summarizeSources(List<TotpEntry> entries) {
+        LinkedHashSet<String> set = new LinkedHashSet<>();
+        for (TotpEntry e : entries) {
+            String source = e.displaySource();
+            set.add(source.isEmpty() ? getString(R.string.local_source) : source);
+        }
+        return set.isEmpty() ? getString(R.string.local_source)
+                : android.text.TextUtils.join("、", set);
     }
 
     /**
@@ -569,11 +598,22 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
     // ------------------------------------------------------------------ export all
 
     /**
-     * Whole-vault export, offered from the info page. Both formats leave through the share
-     * sheet, so saving to a file is whatever the user's share targets provide.
+     * Whole-vault export, offered from the info page. The manager runs first so the user picks
+     * which entries leave; both formats then go through the share sheet, so saving to a file is
+     * whatever the user's share targets provide.
      */
     private void exportAll() {
         if (_entries.isEmpty()) {
+            toast(getString(R.string.export_empty));
+            return;
+        }
+        TransferManagerDialog.show(this, getString(R.string.transfer_export_title),
+                getString(R.string.transfer_summary_export, _entries.size()),
+                _entries, true, this::showExportFormatDialog);
+    }
+
+    private void showExportFormatDialog(List<TotpEntry> selected) {
+        if (selected.isEmpty()) {
             toast(getString(R.string.export_empty));
             return;
         }
@@ -589,16 +629,16 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
                     try {
                         if (which == 0) {
                             shareExport("text/plain",
-                                    getString(R.string.export_subject, _entries.size()),
-                                    io.blockman.totpull.format.ExportEngine.toOtpauthText(_entries));
+                                    getString(R.string.export_subject, selected.size()),
+                                    io.blockman.totpull.format.ExportEngine.toOtpauthText(selected));
                         } else if (which == 1) {
                             shareExport("application/json",
-                                    getString(R.string.export_subject, _entries.size()),
-                                    io.blockman.totpull.format.ExportEngine.toAegisJson(_entries));
+                                    getString(R.string.export_subject, selected.size()),
+                                    io.blockman.totpull.format.ExportEngine.toAegisJson(selected));
                         } else if (which == 2) {
-                            shareDeeplink();
+                            shareDeeplink(selected);
                         } else {
-                            showMigrationQrDialog();
+                            showMigrationQrDialog(selected);
                         }
                     } catch (Exception e) {
                         toast(getString(R.string.export_failed));
@@ -624,8 +664,8 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
      * The migration format carries at most ten entries per link; more than that asks which batch
      * to send first.
      */
-    private void shareDeeplink() {
-        List<String> uris = io.blockman.totpull.format.MigrationExporter.toMigrationUris(_entries);
+    private void shareDeeplink(List<TotpEntry> entries) {
+        List<String> uris = io.blockman.totpull.format.MigrationExporter.toMigrationUris(entries);
         if (uris.isEmpty()) {
             toast(getString(R.string.export_empty));
             return;
@@ -637,7 +677,7 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
         String[] items = new String[uris.size()];
         for (int i = 0; i < uris.size(); i++) {
             int from = i * 10 + 1;
-            int to = Math.min((i + 1) * 10, _entries.size());
+            int to = Math.min((i + 1) * 10, entries.size());
             items[i] = getString(R.string.deeplink_batch_item, i + 1, uris.size(), from, to);
         }
         new MaterialAlertDialogBuilder(this)
@@ -655,8 +695,8 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
     }
 
     /** Shows the migration export as scannable QR code(s), one page per ten entries. */
-    private void showMigrationQrDialog() {
-        List<String> uris = io.blockman.totpull.format.MigrationExporter.toMigrationUris(_entries);
+    private void showMigrationQrDialog(List<TotpEntry> entries) {
+        List<String> uris = io.blockman.totpull.format.MigrationExporter.toMigrationUris(entries);
         if (uris.isEmpty()) {
             toast(getString(R.string.export_empty));
             return;
@@ -896,6 +936,41 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
      * which survives this activity being backgrounded or killed.
      */
     private void showProbeReport() {
+        // Entries pulled in the last round wait here for the user's selection; the manager
+        // replaces the plain report dialog, because it already shows everything the report
+        // carried (count, source) plus per-entry control.
+        List<TotpEntry> incoming = ProbeReceiver.takeIncoming(this);
+        if (incoming != null && !incoming.isEmpty()) {
+            _pendingProbe = null;
+            _handler.removeCallbacks(_probeTimeout);
+            ProbeReceiver.clearPending(this);
+            setModuleReady(Boolean.TRUE);
+            reload();
+
+            String source = summarizeSources(incoming);
+            TransferManagerDialog.show(this, getString(R.string.transfer_import_title),
+                    getString(R.string.transfer_summary_import, incoming.size(), source),
+                    incoming, false, selected -> {
+                        if (selected.isEmpty()) {
+                            return;
+                        }
+                        List<TotpEntry> all = _store.load();
+                        if (_store.readFailed()) {
+                            toast(getString(R.string.probe_vault_unreadable));
+                            return;
+                        }
+                        all.addAll(selected);
+                        if (!_store.save(all)) {
+                            toast(getString(R.string.probe_save_failed));
+                            return;
+                        }
+                        reload();
+                        toast(getString(R.string.import_ok, source, selected.size()));
+                    });
+            refreshInfo();
+            return;
+        }
+
         JSONObject report = ProbeReceiver.takeReport(this);
         if (report != null) {
             _pendingProbe = null;
@@ -1166,22 +1241,30 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
         if (incoming.isEmpty()) {
             return false;
         }
-
-        List<TotpEntry> all = _store.load();
-        if (_store.readFailed()) {
-            toast(getString(R.string.probe_vault_unreadable));
-            return false;
-        }
-        // Keep every answer as a separate row. De-duplication is a deliberate maintenance
-        // action in the manager, never something an import does silently.
-        int added = incoming.size();
-        all.addAll(incoming);
-        if (added > 0 && !_store.save(all)) {
-            toast(getString(R.string.probe_save_failed));
-            return false;
-        }
-        reload();
-        toast(getString(R.string.report_many, incoming.size(), added));
+        // Nothing touches the vault yet; the manager decides which rows come in. Returning
+        // true even when the user declines: the snapshot was parsed fine, so falling back to
+        // the broadcast probe would only pull the same batch again.
+        TransferManagerDialog.show(this, getString(R.string.transfer_import_title),
+                getString(R.string.transfer_summary_import, incoming.size(), target.label),
+                incoming, false, selected -> {
+                    if (selected.isEmpty()) {
+                        return;
+                    }
+                    List<TotpEntry> all = _store.load();
+                    if (_store.readFailed()) {
+                        toast(getString(R.string.probe_vault_unreadable));
+                        return;
+                    }
+                    // Keep every answer as a separate row. De-duplication is a deliberate
+                    // maintenance action in the manager, never something an import does silently.
+                    all.addAll(selected);
+                    if (!_store.save(all)) {
+                        toast(getString(R.string.probe_save_failed));
+                        return;
+                    }
+                    reload();
+                    toast(getString(R.string.import_ok, target.label, selected.size()));
+                });
         return true;
     }
 
@@ -1362,16 +1445,34 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
             return;
         }
 
-        List<TotpEntry> current = _store.load();
-        // Duplicate secrets are allowed to coexist. Cleaning them up is a separate,
-        // explicit operation - importing must not silently drop rows.
-        int added = result.entries.size();
-        current.addAll(result.entries);
-        _store.save(current);
-        reload();
-
+        // Nothing touches the vault yet: the manager lists what was parsed and the user
+        // picks which rows come in. Duplicate secrets are allowed to coexist - cleaning
+        // them up stays a separate, explicit operation.
         String format = result.detectedFormat.isEmpty() ? "文本" : result.detectedFormat;
-        toast(getString(R.string.import_ok, format, added));
+        TransferManagerDialog.show(this, getString(R.string.transfer_import_title),
+                getString(R.string.transfer_summary_import, result.entries.size(), format),
+                result.entries, false, selected -> saveImported(selected, format));
+    }
+
+    /** Writes the manager's selection into the vault and reports the outcome. */
+    private void saveImported(List<TotpEntry> selected, String format) {
+        if (selected.isEmpty()) {
+            return;
+        }
+        List<TotpEntry> current = _store.load();
+        if (_store.readFailed()) {
+            // Never write over something we could not read: the import would look like it
+            // worked and every existing entry would be gone.
+            toast(getString(R.string.probe_vault_unreadable));
+            return;
+        }
+        current.addAll(selected);
+        if (!_store.save(current)) {
+            toast(getString(R.string.probe_save_failed));
+            return;
+        }
+        reload();
+        toast(getString(R.string.import_ok, format, selected.size()));
     }
 
     private void askAegisPassword(String text) {

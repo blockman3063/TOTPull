@@ -1,9 +1,13 @@
 package io.blockman.totpull.ui
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.BitmapFactory
+import android.net.Uri
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -50,6 +54,11 @@ import androidx.core.view.WindowCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.google.zxing.BarcodeFormat
+import com.google.zxing.BinaryBitmap
+import com.google.zxing.DecodeHintType
+import com.google.zxing.RGBLuminanceSource
+import com.google.zxing.common.HybridBinarizer
+import com.google.zxing.qrcode.QRCodeReader
 import com.journeyapps.barcodescanner.BarcodeCallback
 import com.journeyapps.barcodescanner.BarcodeResult
 import com.journeyapps.barcodescanner.BarcodeView
@@ -87,6 +96,51 @@ class ScanActivity : AppCompatActivity() {
                 onClose = { finish() }
             )
         }
+    }
+}
+
+/**
+ * Decodes a QR code from a picked gallery image. Huge photos are downsampled before
+ * decoding; if the straight binarization finds nothing the image is retried inverted,
+ * which covers dark-mode screenshots with light codes.
+ */
+private fun decodeQrFromUri(context: Context, uri: Uri): String? {
+    return try {
+        val resolver = context.contentResolver
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        resolver.openInputStream(uri)?.use {
+            BitmapFactory.decodeStream(it, null, bounds)
+        } ?: return null
+        if (bounds.outWidth <= 0) return null
+
+        val maxSide = maxOf(bounds.outWidth, bounds.outHeight)
+        var sample = 1
+        while (maxSide / (sample * 2) >= 1600) {
+            sample *= 2
+        }
+        val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+        val bmp = resolver.openInputStream(uri)?.use {
+            BitmapFactory.decodeStream(it, null, opts)
+        } ?: return null
+
+        val pixels = IntArray(bmp.width * bmp.height)
+        bmp.getPixels(pixels, 0, bmp.width, 0, 0, bmp.width, bmp.height)
+        bmp.recycle()
+        val source = RGBLuminanceSource(bmp.width, bmp.height, pixels)
+        val hints = mapOf(DecodeHintType.TRY_HARDER to true)
+
+        try {
+            QRCodeReader().decode(BinaryBitmap(HybridBinarizer(source)), hints).text
+        } catch (first: Exception) {
+            try {
+                // Inverted luminance: retry without recycling the same reader state.
+                QRCodeReader().decode(BinaryBitmap(HybridBinarizer(source.invert())), hints).text
+            } catch (second: Exception) {
+                null
+            }
+        }
+    } catch (t: Throwable) {
+        null
     }
 }
 
@@ -143,8 +197,24 @@ private fun QrScanScreen(onResult: (String) -> Unit, onClose: () -> Unit) {
 @Composable
 private fun ScannerContent(onResult: (String) -> Unit, onClose: () -> Unit) {
     val lifecycleOwner = LocalLifecycleOwner.current
+    val context = LocalContext.current
     val prompt = stringResource(R.string.scan_prompt)
     val scanner = remember { mutableStateOf<BarcodeView?>(null) }
+
+    // Gallery import: same exit path as a camera hit, so the picked image flows through
+    // the identical import pipeline afterwards.
+    val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri == null) {
+            return@rememberLauncherForActivityResult
+        }
+        val text = decodeQrFromUri(context, uri)
+        if (text != null) {
+            onResult(text)
+        } else {
+            Toast.makeText(context, context.getString(R.string.scan_gallery_no_qr),
+                    Toast.LENGTH_SHORT).show()
+        }
+    }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -162,7 +232,13 @@ private fun ScannerContent(onResult: (String) -> Unit, onClose: () -> Unit) {
     AndroidView(
         factory = { ctx ->
             BarcodeView(ctx).apply {
-                setDecoderFactory(DefaultDecoderFactory(listOf(BarcodeFormat.QR_CODE)))
+                // TRY_HARDER: migration export QRs pack a whole protobuf payload and get
+                // large (100+ modules a side); without it zxing often gives up at the
+                // camera preview's resolution. There is no entry filtering here on purpose -
+                // otpauth / otpauth-migration / any text lands in the import pipeline.
+                val hints = mapOf(com.google.zxing.DecodeHintType.TRY_HARDER to true)
+                setDecoderFactory(DefaultDecoderFactory(
+                        listOf(BarcodeFormat.QR_CODE), hints, null, 0))
                 decodeContinuous(object : BarcodeCallback {
                     override fun barcodeResult(result: BarcodeResult) {
                         result.text?.takeIf { it.isNotEmpty() }?.let(onResult)
@@ -223,7 +299,7 @@ private fun ScannerContent(onResult: (String) -> Unit, onClose: () -> Unit) {
         )
     }
 
-    // Top bar: close button.
+    // Top bar: close button + gallery picker.
     Text(
         "✕",
         color = Color.White,
@@ -234,6 +310,18 @@ private fun ScannerContent(onResult: (String) -> Unit, onClose: () -> Unit) {
             .size(44.dp)
             .clickable { onClose() }
             .padding(top = 2.dp)
+    )
+    Text(
+        "相册",
+        color = Color.White.copy(alpha = 0.9f),
+        fontSize = 15.sp,
+        textAlign = TextAlign.Center,
+        modifier = Modifier
+            .align(Alignment.TopEnd)
+            .padding(end = 12.dp, top = 44.dp)
+            .size(44.dp)
+            .clickable { pickImage.launch("image/*") }
+            .padding(top = 10.dp)
     )
 
     // Prompt near the bottom.

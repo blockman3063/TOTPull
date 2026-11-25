@@ -47,6 +47,11 @@ public class ProbeReceiver extends BroadcastReceiver {
     private static final String PREFS = "probe_state";
     /** JSON blob describing the last completed round; read by the UI on resume. */
     static final String KEY_REPORT = "report";
+    /**
+     * JSON array of entries pulled in the last round, waiting for the user to confirm them in
+     * the import manager. Nothing touches the vault until the user ticks entries and confirms.
+     */
+    static final String KEY_INCOMING = "incoming_entries";
     /** Wall-clock millis when the user started a round, 0 when idle. */
     static final String KEY_PENDING_SINCE = "pending_since";
 
@@ -130,35 +135,15 @@ public class ProbeReceiver extends BroadcastReceiver {
             entry.note = note;
         }
 
-        // Duplicates are kept: the user cleans them up explicitly in the manager later.
-        boolean duplicate = false;
-        try {
-            TotpStore store = new TotpStore(context);
-            List<TotpEntry> all = store.load();
-            if (store.readFailed()) {
-                // Never write over something we could not read: the import would look like it
-                // worked and every existing entry would be gone.
-                Log.w(TAG, "vault unreadable, leaving it alone");
-                writeReport(context, false, null, null,
-                        context.getString(R.string.probe_vault_unreadable), false);
-                return;
-            }
-            all.add(entry);
-            if (!store.save(all)) {
-                writeReport(context, false, null, null,
-                        context.getString(R.string.probe_save_failed), false);
-                return;
-            }
-        } catch (Throwable t) {
-            Log.w(TAG, "save failed", t);
-            writeReport(context, false, null, null, String.valueOf(t), false);
-            return;
-        }
+        // Buffer instead of saving: the import manager in MainActivity shows the entry for
+        // confirmation when the user comes back, and only then does the vault get written.
+        List<TotpEntry> one = new ArrayList<>();
+        one.add(entry);
+        bufferIncoming(context, one);
 
         // The module answered, so it is loaded and healthy in the target app.
         Capabilities.setModuleReady(context, Boolean.TRUE);
         clearPending(context);
-        writeReport(context, true, entry.name, entry.issuer, null, duplicate);
 
         notifyAndReturn(context);
     }
@@ -201,29 +186,15 @@ public class ProbeReceiver extends BroadcastReceiver {
         }
 
         try {
-            TotpStore store = new TotpStore(context);
-            List<TotpEntry> all = store.load();
-            if (store.readFailed()) {
-                Log.w(TAG, "vault unreadable, leaving it alone");
-                writeReport(context, false, null, null,
-                        context.getString(R.string.probe_vault_unreadable), false);
-                return;
-            }
-            // Keep every row from every answer, even identical secrets.
-            int added = incoming.size();
-            all.addAll(incoming);
-            if (added > 0 && !store.save(all)) {
-                writeReport(context, false, null, null,
-                        context.getString(R.string.probe_save_failed), false);
-                return;
-            }
+            // Keep every row from every answer, even identical secrets. The entries wait in
+            // the incoming buffer; the vault is written only after the user confirms the
+            // selection in the import manager.
+            bufferIncoming(context, incoming);
             Capabilities.setModuleReady(context, Boolean.TRUE);
             clearPending(context);
-            writeReportMessage(context,
-                    context.getString(R.string.report_many, incoming.size(), added));
             notifyAndReturn(context);
         } catch (Throwable t) {
-            Log.w(TAG, "batch save failed", t);
+            Log.w(TAG, "buffer failed", t);
             writeReport(context, false, null, null, String.valueOf(t), false);
         }
     }
@@ -280,6 +251,7 @@ public class ProbeReceiver extends BroadcastReceiver {
         prefs(context).edit()
                 .putLong(KEY_PENDING_SINCE, System.currentTimeMillis())
                 .remove(KEY_REPORT)
+                .remove(KEY_INCOMING)
                 .commit();
     }
 
@@ -306,16 +278,62 @@ public class ProbeReceiver extends BroadcastReceiver {
         }
     }
 
-    private static void writeReportMessage(Context context, String message) {
+    // ------------------------------------------------------------------ incoming buffer
+
+    /** Stashes the entries of a finished round until the user confirms them in the manager. */
+    private static void bufferIncoming(Context context, List<TotpEntry> entries) {
         try {
-            org.json.JSONObject json = new org.json.JSONObject();
-            json.put("ok", true);
-            json.put("ts", System.currentTimeMillis());
-            json.put("message", message);
-            prefs(context).edit().putString(KEY_REPORT, json.toString()).commit();
+            org.json.JSONArray array = new org.json.JSONArray();
+            for (TotpEntry entry : entries) {
+                org.json.JSONObject item = new org.json.JSONObject();
+                item.put("otpauth", entry.toOtpauthUri());
+                item.put("note", entry.note == null ? "" : entry.note);
+                item.put("source_package", entry.sourcePackage == null
+                        ? "" : entry.sourcePackage);
+                item.put("source_label", entry.sourceLabel == null
+                        ? "" : entry.sourceLabel);
+                array.put(item);
+            }
+            boolean written = prefs(context).edit()
+                    .putString(KEY_INCOMING, array.toString()).commit();
+            Log.i(TAG, "incoming buffered=" + written + " count=" + entries.size());
         } catch (Throwable t) {
-            Log.w(TAG, "report failed", t);
+            Log.w(TAG, "buffer write failed", t);
         }
+    }
+
+    /**
+     * Returns the buffered entries of the last round and consumes them. Null when nothing is
+     * waiting; an empty list means the buffer existed but nothing in it survived parsing.
+     */
+    public static List<TotpEntry> takeIncoming(Context context) {
+        SharedPreferences p = prefs(context);
+        String raw = p.getString(KEY_INCOMING, null);
+        if (raw == null) {
+            return null;
+        }
+        p.edit().remove(KEY_INCOMING).commit();
+        List<TotpEntry> out = new ArrayList<>();
+        try {
+            org.json.JSONArray array = new org.json.JSONArray(raw);
+            for (int i = 0; i < array.length(); i++) {
+                org.json.JSONObject item = array.optJSONObject(i);
+                if (item == null) {
+                    continue;
+                }
+                TotpEntry entry = TotpEntry.fromOtpauth(item.optString("otpauth", ""));
+                if (entry == null) {
+                    continue;
+                }
+                entry.note = item.optString("note", "");
+                entry.sourcePackage = item.optString("source_package", "");
+                entry.sourceLabel = item.optString("source_label", "");
+                out.add(entry);
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "buffer read failed", t);
+        }
+        return out;
     }
 
     private static void writeReport(Context context, boolean ok, String name, String issuer,

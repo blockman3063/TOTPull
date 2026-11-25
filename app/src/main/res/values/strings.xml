@@ -197,4 +197,19 @@
 
     <string name="row_version">版本</string>
     <string name="row_target">支持的应用</string>
+
+    <!-- 导入/导出确认管理器 -->
+    <string name="transfer_import_title">导入确认</string>
+    <string name="transfer_export_title">导出确认</string>
+    <string name="transfer_summary_import">本次导入 %1$d 条 · 来源：%2$s</string>
+    <string name="transfer_summary_export">本次导出 %1$d 条</string>
+    <string name="transfer_selected">已选 %1$d 条</string>
+    <string name="transfer_select_all">全选</string>
+    <string name="transfer_invert">反转</string>
+    <string name="transfer_import_confirm">导入（%1$d 条）</string>
+    <string name="transfer_export_confirm">导出（%1$d 条）</string>
+    <string name="transfer_type_steam">Steam</string>
+    <string name="transfer_type_hotp">HOTP</string>
+    <string name="transfer_type_totp">TOTP</string>
+    <string name="scan_gallery_no_qr">这张图片里没有识别到二维码</string>
 </resources>
