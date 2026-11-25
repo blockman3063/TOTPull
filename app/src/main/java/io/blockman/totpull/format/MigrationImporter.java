@@ -30,14 +30,29 @@ public final class MigrationImporter {
         return text != null && text.trim().startsWith("otpauth-migration://");
     }
 
+    /** A parsed migration link including its position in a multi-page export. */
+    public static class Batch {
+        public final List<TotpEntry> entries = new ArrayList<>();
+        /** Zero-based page number, exactly as stored in the payload (GA convention). */
+        public int index = 0;
+        public int size = 1;
+        /** Groups the pages of one export round together; may be 0 when absent. */
+        public long id = 0;
+    }
+
     public static List<TotpEntry> parse(String uriString) {
-        List<TotpEntry> result = new ArrayList<>();
+        return parseBatch(uriString).entries;
+    }
+
+    /** Like {@link #parse}, but keeps the batch page bookkeeping (第 X/Y 页). */
+    public static Batch parseBatch(String uriString) {
+        Batch batch = new Batch();
         if (uriString == null) {
-            return result;
+            return batch;
         }
         String dataParam = extractData(uriString);
         if (dataParam == null || dataParam.isEmpty()) {
-            return result;
+            return batch;
         }
 
         // Google Authenticator encodes the payload with the URL-safe alphabet (- and _),
@@ -54,10 +69,10 @@ public final class MigrationImporter {
         try {
             payload = Base64.decode(normalized, Base64.DEFAULT);
         } catch (Exception e) {
-            return result;
+            return batch;
         }
         if (payload.length == 0) {
-            return result;
+            return batch;
         }
 
         ProtoReader reader = new ProtoReader(payload);
@@ -68,13 +83,21 @@ public final class MigrationImporter {
             if (field == 1 && wire == 2) {
                 TotpEntry entry = parseParameters(reader.readBytes());
                 if (entry != null) {
-                    result.add(entry);
+                    batch.entries.add(entry);
                 }
+            } else if (field == 3 && wire == 0) {
+                // batch_size: pages in this export round.
+                batch.size = Math.max(1, (int) reader.readVarint());
+            } else if (field == 4 && wire == 0) {
+                // batch_index: zero-based, the official app displays index + 1.
+                batch.index = (int) reader.readVarint();
+            } else if (field == 5 && wire == 0) {
+                batch.id = reader.readVarint();
             } else {
                 reader.skip(wire);
             }
         }
-        return result;
+        return batch;
     }
 
     private static String extractData(String uriString) {

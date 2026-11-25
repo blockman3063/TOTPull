@@ -42,6 +42,9 @@ public final class ImportEngine {
         public final List<TotpEntry> entries = new ArrayList<>();
         public final List<String> warnings = new ArrayList<>();
         public String detectedFormat = "";
+        /** Google migration paging: distinct pages collected / total pages (0 when not one). */
+        public int migrationPages = 0;
+        public int migrationSize = 0;
 
         public boolean isEmpty() {
             return entries.isEmpty();
@@ -68,7 +71,26 @@ public final class ImportEngine {
         try {
             if (MigrationImporter.looksLike(t)) {
                 result.detectedFormat = "Google Authenticator（迁移链接）";
-                result.entries.addAll(MigrationImporter.parse(t));
+                // The text may carry several migration pages (ScanActivity batches them);
+                // merge every line, keeping the largest size and the distinct page count.
+                java.util.TreeSet<Integer> seenPages = new java.util.TreeSet<>();
+                for (String line : t.split("\n")) {
+                    String uri = line.trim();
+                    if (!MigrationImporter.looksLike(uri)) {
+                        continue;
+                    }
+                    try {
+                        MigrationImporter.Batch batch = MigrationImporter.parseBatch(uri);
+                        result.migrationSize = Math.max(result.migrationSize,
+                                Math.max(1, batch.size));
+                        seenPages.add(Math.min(Math.max(batch.index + 1, 1),
+                                Math.max(1, batch.size)));
+                        result.entries.addAll(batch.entries);
+                    } catch (Exception e) {
+                        result.warnings.add("迁移链接解析失败");
+                    }
+                }
+                result.migrationPages = seenPages.size();
                 if (!result.entries.isEmpty()) {
                     return result;
                 }
@@ -138,7 +160,11 @@ public final class ImportEngine {
             if (candidate.startsWith("otpauth-migration://")) {
                 found = true;
                 try {
-                    result.entries.addAll(MigrationImporter.parse(candidate));
+                    MigrationImporter.Batch batch = MigrationImporter.parseBatch(candidate);
+                    result.migrationSize = Math.max(result.migrationSize,
+                            Math.max(1, batch.size));
+                    result.migrationPages++;
+                    result.entries.addAll(batch.entries);
                 } catch (Exception e) {
                     result.warnings.add("迁移链接解析失败");
                 }

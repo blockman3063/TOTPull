@@ -536,13 +536,12 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
      * body - tap copies, long-press opens the editor.
      */
     private void showEntryMenu(TotpEntry entry) {
-        String code = entry.isSupported() ? TotpGenerator.generate(entry) : "";
         List<String> labels = new ArrayList<>();
         List<Integer> actions = new ArrayList<>();
-        labels.add(getString(R.string.entry_menu_share_code));
-        actions.add(0);
         labels.add(getString(R.string.entry_menu_share_uri));
         actions.add(1);
+        labels.add(getString(R.string.entry_menu_share_qr));
+        actions.add(4);
         labels.add(getString(R.string.entry_menu_deeplink));
         actions.add(2);
         if (entry.isSteam()) {
@@ -557,14 +556,10 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
                 .setTitle(entry.displayName())
                 .setItems(labels.toArray(new String[0]), (d, which) -> {
                     int action = actions.get(which);
-                    if (action == 0) {
-                        String account = entry.displayAccount();
-                        String subject = account.isEmpty() || account.equals(entry.displayName())
-                                ? entry.displayName() : entry.displayName() + " · " + account;
-                        shareText(subject, code.isEmpty() ? "----"
-                                : TotpGenerator.format(code, entry.isSteam()));
-                    } else if (action == 1) {
+                    if (action == 1) {
                         shareText(entry.displayName(), entry.toOtpauthUri());
+                    } else if (action == 4) {
+                        shareQrImage(entry);
                     } else if (action == 2) {
                         // Hand the single otpauth URI straight to another validator app.
                         sendDeeplink(entry.toOtpauthUri());
@@ -573,6 +568,38 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
                     }
                 })
                 .show();
+    }
+
+    /** Renders the entry's otpauth URI as a QR PNG and hands it to the share sheet. */
+    private void shareQrImage(TotpEntry entry) {
+        try {
+            android.graphics.Bitmap bmp = renderQr(entry.toOtpauthUri(), 720);
+            if (bmp == null) {
+                toast(getString(R.string.export_failed));
+                return;
+            }
+            java.io.File dir = new java.io.File(getCacheDir(), "captured");
+            if (!dir.exists()) {
+                dir.mkdirs();
+            }
+            java.io.File file = new java.io.File(dir, "share_" + entry.id + ".png");
+            try (java.io.FileOutputStream out = new java.io.FileOutputStream(file)) {
+                bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out);
+            }
+            android.net.Uri uri = androidx.core.content.FileProvider.getUriForFile(
+                    this, getPackageName() + ".fileprovider", file);
+            android.content.Intent share = new android.content.Intent(
+                    android.content.Intent.ACTION_SEND);
+            share.setType("image/png");
+            share.putExtra(android.content.Intent.EXTRA_STREAM, uri);
+            share.putExtra(android.content.Intent.EXTRA_TEXT, entry.toOtpauthUri());
+            share.addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivity(android.content.Intent.createChooser(
+                    share, entry.displayName()));
+        } catch (Exception e) {
+            android.util.Log.e("TOTPull", "qr share failed", e);
+            toast(getString(R.string.export_failed) + "：" + e.getMessage());
+        }
     }
 
     /** Puts the Bitwarden-style steam:// key on the clipboard for manual pasting. */
@@ -641,7 +668,8 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
                             showMigrationQrDialog(selected);
                         }
                     } catch (Exception e) {
-                        toast(getString(R.string.export_failed));
+                        android.util.Log.e("TOTPull", "export failed", e);
+                        toast(getString(R.string.export_failed) + "：" + e.getMessage());
                     }
                 })
                 .setNegativeButton(R.string.cancel, null)
@@ -697,6 +725,12 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
     /** Shows the migration export as scannable QR code(s), one page per ten entries. */
     private void showMigrationQrDialog(List<TotpEntry> entries) {
         List<String> uris = io.blockman.totpull.format.MigrationExporter.toMigrationUris(entries);
+        StringBuilder sizes = new StringBuilder();
+        for (String u : uris) {
+            sizes.append(u.length()).append(" ");
+        }
+        android.util.Log.i("TOTPull", "migration uris: entries=" + entries.size()
+                + " pages=" + uris.size() + " lens=[" + sizes + "]");
         if (uris.isEmpty()) {
             toast(getString(R.string.export_empty));
             return;
@@ -709,7 +743,8 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
 
         com.google.android.material.dialog.MaterialAlertDialogBuilder builder =
                 new MaterialAlertDialogBuilder(this)
-                        .setTitle(R.string.export_qr_title)
+                        .setTitle(getString(R.string.export_qr_title)
+                                + (uris.size() > 1 ? "（共 " + uris.size() + " 页）" : ""))
                         .setView(view)
                         .setPositiveButton(R.string.close, null);
 
@@ -765,6 +800,8 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
             bmp.setPixels(pixels, 0, width, 0, 0, width, width);
             return bmp;
         } catch (Exception e) {
+            android.util.Log.e("TOTPull", "qr render failed for "
+                    + content.length() + " chars", e);
             return null;
         }
     }
@@ -1448,14 +1485,28 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
         // Nothing touches the vault yet: the manager lists what was parsed and the user
         // picks which rows come in. Duplicate secrets are allowed to coexist - cleaning
         // them up stays a separate, explicit operation.
-        String format = result.detectedFormat.isEmpty() ? "文本" : result.detectedFormat;
+        StringBuilder format = new StringBuilder(
+                result.detectedFormat.isEmpty() ? "文本" : result.detectedFormat);
+        StringBuilder hint = new StringBuilder();
+        if (result.migrationSize > 1) {
+            // Google exports split accounts across pages; show the collected progress and
+            // remind the user that missing pages still need importing.
+            format.append("（已收集 ").append(result.migrationPages).append(" / ")
+                    .append(result.migrationSize).append(" 页）");
+            if (result.migrationPages < result.migrationSize) {
+                hint.append("，还有 ").append(result.migrationSize - result.migrationPages)
+                        .append(" 页未导入");
+            }
+        }
+        final String formatLabel = format.toString();
+        final String afterHint = hint.toString();
         TransferManagerDialog.show(this, getString(R.string.transfer_import_title),
-                getString(R.string.transfer_summary_import, result.entries.size(), format),
-                result.entries, false, selected -> saveImported(selected, format));
+                getString(R.string.transfer_summary_import, result.entries.size(), formatLabel),
+                result.entries, false, selected -> saveImported(selected, formatLabel, afterHint));
     }
 
     /** Writes the manager's selection into the vault and reports the outcome. */
-    private void saveImported(List<TotpEntry> selected, String format) {
+    private void saveImported(List<TotpEntry> selected, String format, String afterHint) {
         if (selected.isEmpty()) {
             return;
         }
@@ -1472,7 +1523,7 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
             return;
         }
         reload();
-        toast(getString(R.string.import_ok, format, selected.size()));
+        toast(getString(R.string.import_ok, format, selected.size()) + afterHint);
     }
 
     private void askAegisPassword(String text) {

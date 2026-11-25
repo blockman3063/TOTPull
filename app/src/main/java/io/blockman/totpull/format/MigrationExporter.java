@@ -32,6 +32,13 @@ public final class MigrationExporter {
             if (!e.isSupported() || e.isSteam()) {
                 continue;
             }
+            // base32Decode skips invalid characters instead of failing, so a secret field
+            // holding arbitrary text (corrupted or hand-edited rows) decodes to a giant
+            // byte blob that blows past the QR capacity. Real seeds cap at 64 bytes.
+            byte[] secret = TotpGenerator.base32Decode(TotpGenerator.canonicalSecret(e.secret));
+            if (secret.length < 10 || secret.length > 64) {
+                continue;
+            }
             shareable.add(e);
         }
 
@@ -46,7 +53,7 @@ public final class MigrationExporter {
             }
             payload.varintField(2, 1);          // version
             payload.varintField(3, batches);    // batch_size
-            payload.varintField(4, b + 1);      // batch_index, one-based like the official app
+            payload.varintField(4, b);          // batch_index, zero-based like the official app
 
             String data = Base64.encodeToString(payload.toBytes(), Base64.NO_WRAP);
             uris.add("otpauth-migration://offline?data=" + Uri.encode(data));

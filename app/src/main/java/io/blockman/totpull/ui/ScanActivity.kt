@@ -14,6 +14,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -21,6 +22,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -42,6 +45,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathFillType
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
@@ -107,10 +112,15 @@ class ScanActivity : AppCompatActivity() {
 private fun decodeQrFromUri(context: Context, uri: Uri): String? {
     return try {
         val resolver = context.contentResolver
+
+        // First pass: measure without allocating pixels. decodeStream returns null in this
+        // mode on purpose, so the stream must not be treated as failed when the result is
+        // null - only bounds validity says whether the image was understood.
+        val boundsProbe = resolver.openInputStream(uri) ?: return null
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        resolver.openInputStream(uri)?.use {
+        boundsProbe.use {
             BitmapFactory.decodeStream(it, null, bounds)
-        } ?: return null
+        }
         if (bounds.outWidth <= 0) return null
 
         val maxSide = maxOf(bounds.outWidth, bounds.outHeight)
@@ -119,7 +129,8 @@ private fun decodeQrFromUri(context: Context, uri: Uri): String? {
             sample *= 2
         }
         val opts = BitmapFactory.Options().apply { inSampleSize = sample }
-        val bmp = resolver.openInputStream(uri)?.use {
+        val decodeStream = resolver.openInputStream(uri) ?: return null
+        val bmp = decodeStream.use {
             BitmapFactory.decodeStream(it, null, opts)
         } ?: return null
 
@@ -149,6 +160,40 @@ private fun viewfinderRect(size: Size, densityPx: Float): Rect {
     val cx = size.width / 2f
     val cy = size.height * 0.42f
     return Rect(cx - side / 2f, cy - side / 2f, cx + side / 2f, cy + side / 2f)
+}
+
+/**
+ * Aggressive one-shot decode for the freeze-frame button: tries both binarizers, both
+ * polarities and quarter rotations. The continuous loop runs the cheap path only, so this
+ * catches frames it missed (low-contrast screen codes, slightly rotated captures).
+ */
+private fun deepDecode(bmp: android.graphics.Bitmap): String? {
+    return try {
+        val pixels = IntArray(bmp.width * bmp.height)
+        bmp.getPixels(pixels, 0, bmp.width, 0, 0, bmp.width, bmp.height)
+        var source: com.google.zxing.LuminanceSource =
+                RGBLuminanceSource(bmp.width, bmp.height, pixels)
+        val hints = mapOf(DecodeHintType.TRY_HARDER to true)
+
+        repeat(4) {
+            // invert() and rotation live on the luminance source; binarizers wrap it.
+            for (base in listOf(source, source.invert())) {
+                for (binarizer in listOf(
+                        HybridBinarizer(base),
+                        com.google.zxing.common.GlobalHistogramBinarizer(base))) {
+                    try {
+                        QRCodeReader().decode(BinaryBitmap(binarizer), hints)
+                                .text?.let { return it }
+                    } catch (e: Exception) {
+                    }
+                }
+            }
+            source = source.rotateCounterClockwise()
+        }
+        null
+    } catch (t: Throwable) {
+        null
+    }
 }
 
 @Composable
@@ -200,6 +245,56 @@ private fun ScannerContent(onResult: (String) -> Unit, onClose: () -> Unit) {
     val context = LocalContext.current
     val prompt = stringResource(R.string.scan_prompt)
     val scanner = remember { mutableStateOf<BarcodeView?>(null) }
+    // Pinch-to-zoom state: a normalized 0..1 fraction of the camera's zoom range, applied
+    // through changeCameraParameters because zxing-embedded 4.3.0 has no zoom API of its own.
+    var zoomFraction by remember { mutableStateOf(0f) }
+    val maxRatio = 6f
+
+    fun applyZoom(fraction: Float) {
+        zoomFraction = fraction.coerceIn(0f, 1f)
+        scanner.value?.changeCameraParameters { params ->
+            if (params.isZoomSupported) {
+                params.setZoom((params.maxZoom * zoomFraction).toInt())
+            }
+            params
+        }
+    }
+
+    // Multi-page migration buffer: pages collected in this session, keyed by the payload's
+    // zero-based batch_index. Collecting every page (or tapping 直接导入) hands the joined
+    // URIs through the normal import pipeline instead of jumping into the manager early.
+    var bufferBatchId by remember { mutableStateOf<Long?>(null) }
+    var bufferSize by remember { mutableStateOf(0) }
+    var bufferedPages by remember { mutableStateOf<Map<Int, String>>(emptyMap()) }
+    var bufferedCounts by remember { mutableStateOf<Map<Int, Int>>(emptyMap()) }
+
+    fun handleScanText(text: String) {
+        if (text.contains("otpauth-migration://")) {
+            val batch = io.blockman.totpull.format.MigrationImporter.parseBatch(text)
+            if (batch.size > 1 && batch.entries.isNotEmpty()) {
+                if (bufferBatchId != null && bufferBatchId != batch.id) {
+                    // A different export round: start a fresh buffer.
+                    bufferedPages = emptyMap()
+                    bufferedCounts = emptyMap()
+                }
+                val isNew = !bufferedPages.containsKey(batch.index)
+                bufferBatchId = batch.id
+                bufferSize = batch.size
+                bufferedPages = bufferedPages + (batch.index to text)
+                bufferedCounts = bufferedCounts + (batch.index to batch.entries.size)
+                if (isNew) {
+                    Toast.makeText(context,
+                            "已收集第 ${batch.index + 1}/${batch.size} 页（${batch.entries.size} 条）",
+                            Toast.LENGTH_SHORT).show()
+                }
+                if (bufferedPages.size >= batch.size) {
+                    onResult(bufferedPages.toSortedMap().values.joinToString("\n"))
+                }
+                return
+            }
+        }
+        onResult(text)
+    }
 
     // Gallery import: same exit path as a camera hit, so the picked image flows through
     // the identical import pipeline afterwards.
@@ -209,11 +304,75 @@ private fun ScannerContent(onResult: (String) -> Unit, onClose: () -> Unit) {
         }
         val text = decodeQrFromUri(context, uri)
         if (text != null) {
-            onResult(text)
+            handleScanText(text)
         } else {
             Toast.makeText(context, context.getString(R.string.scan_gallery_no_qr),
                     Toast.LENGTH_SHORT).show()
         }
+    }
+
+    // System camera capture: hand off to the full-featured camera app, then decode the
+    // saved JPEG through the same pipeline. Files go into our own FileProvider scope.
+    var captureFile by remember { mutableStateOf<java.io.File?>(null) }
+    val systemCapture = rememberLauncherForActivityResult(
+            ActivityResultContracts.TakePicture()) { ok ->
+        val file = captureFile
+        if (ok && file != null) {
+            val uri = androidx.core.content.FileProvider.getUriForFile(
+                    context, context.packageName + ".fileprovider", file)
+            val text = decodeQrFromUri(context, uri)
+            if (text != null) {
+                handleScanText(text)
+            } else {
+                Toast.makeText(context, context.getString(R.string.scan_gallery_no_qr),
+                        Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+    fun launchSystemCapture() {
+        try {
+            val dir = java.io.File(context.cacheDir, "captured").apply { mkdirs() }
+            val file = java.io.File(dir, "capture_" + System.currentTimeMillis() + ".jpg")
+            val uri = androidx.core.content.FileProvider.getUriForFile(
+                    context, context.packageName + ".fileprovider", file)
+            captureFile = file
+            systemCapture.launch(uri)
+        } catch (t: Throwable) {
+            Toast.makeText(context, context.getString(R.string.scan_capture_failed),
+                    Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // Freeze frame: grab the current preview frame through the camera instance and give it
+    // the deep decode (every binarizer and rotation) that the continuous loop skips.
+    fun freezeAndDecode() {
+        val instance = scanner.value?.cameraInstance ?: return
+        instance.requestPreview(object :
+                com.journeyapps.barcodescanner.camera.PreviewCallback {
+            override fun onPreview(data: com.journeyapps.barcodescanner.SourceData) {
+                val text = try {
+                    deepDecode(data.getBitmap())
+                } catch (t: Throwable) {
+                    null
+                }
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    if (text != null) {
+                        handleScanText(text)
+                    } else {
+                        Toast.makeText(context,
+                                context.getString(R.string.scan_gallery_no_qr),
+                                Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+
+            override fun onPreviewError(e: Exception) {
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    Toast.makeText(context, context.getString(R.string.scan_capture_failed),
+                            Toast.LENGTH_SHORT).show()
+                }
+            }
+        })
     }
 
     DisposableEffect(lifecycleOwner) {
@@ -241,7 +400,12 @@ private fun ScannerContent(onResult: (String) -> Unit, onClose: () -> Unit) {
                         listOf(BarcodeFormat.QR_CODE), hints, null, 0))
                 decodeContinuous(object : BarcodeCallback {
                     override fun barcodeResult(result: BarcodeResult) {
-                        result.text?.takeIf { it.isNotEmpty() }?.let(onResult)
+                        val text = result.text?.takeIf { it.isNotEmpty() } ?: return
+                        // The callback runs on the decode thread; state mutations and
+                        // toasts must land on the main thread.
+                        android.os.Handler(android.os.Looper.getMainLooper()).post {
+                            handleScanText(text)
+                        }
                     }
 
                     override fun possibleResultPoints(resultPoints: List<com.google.zxing.ResultPoint>) {}
@@ -250,7 +414,16 @@ private fun ScannerContent(onResult: (String) -> Unit, onClose: () -> Unit) {
                 scanner.value = this
             }
         },
-        modifier = Modifier.fillMaxSize()
+        modifier = Modifier
+            .fillMaxSize()
+            .pointerInput(Unit) {
+                detectTransformGestures { _, _, zoom, _ ->
+                    if (zoom != 1f) {
+                        val ratio = 1f + zoomFraction * (maxRatio - 1f)
+                        applyZoom(((ratio * zoom) - 1f) / (maxRatio - 1f))
+                    }
+                }
+            }
     )
 
     // Dimmed scrim with a transparent square cut-out for the viewfinder.
@@ -311,18 +484,145 @@ private fun ScannerContent(onResult: (String) -> Unit, onClose: () -> Unit) {
             .clickable { onClose() }
             .padding(top = 2.dp)
     )
-    Text(
-        "相册",
-        color = Color.White.copy(alpha = 0.9f),
-        fontSize = 15.sp,
-        textAlign = TextAlign.Center,
+    androidx.compose.foundation.layout.Row(
         modifier = Modifier
             .align(Alignment.TopEnd)
-            .padding(end = 12.dp, top = 44.dp)
-            .size(44.dp)
-            .clickable { pickImage.launch("image/*") }
-            .padding(top = 10.dp)
-    )
+            .padding(end = 12.dp, top = 44.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            "拍摄",
+            color = Color.White.copy(alpha = 0.9f),
+            fontSize = 15.sp,
+            textAlign = TextAlign.Center,
+            modifier = Modifier
+                .size(52.dp)
+                .clickable { launchSystemCapture() }
+                .padding(top = 10.dp)
+        )
+        Text(
+            "相册",
+            color = Color.White.copy(alpha = 0.9f),
+            fontSize = 15.sp,
+            textAlign = TextAlign.Center,
+            modifier = Modifier
+                .size(44.dp)
+                .clickable { pickImage.launch("image/*") }
+                .padding(top = 10.dp)
+        )
+    }
+
+    // Zoom ratio indicator, visible only after the user has actually pinched.
+    if (zoomFraction > 0f) {
+        Text(
+            "×%.1f".format(1f + zoomFraction * (maxRatio - 1f)),
+            color = Color.White.copy(alpha = 0.85f),
+            fontSize = 14.sp,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 52.dp)
+        )
+    }
+
+    // Multi-page collection progress, bottom-left; jump out early via 直接导入 bottom-right.
+    if (bufferSize > 0 && bufferedPages.isNotEmpty()) {
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(start = 16.dp, bottom = 150.dp)
+        ) {
+            for (page in 1..bufferSize) {
+                val got = bufferedPages.containsKey(page - 1)
+                val count = bufferedCounts[page - 1]
+                Text(
+                    if (got) "第 $page 页 ✓ ${count ?: 0}条" else "第 $page 页 ·",
+                    color = if (got) Color(0xFF66D17A)
+                            else Color.White.copy(alpha = 0.55f),
+                    fontSize = 13.sp,
+                    modifier = Modifier.padding(vertical = 2.dp)
+                )
+            }
+            Text(
+                "共 ${bufferedCounts.values.sum()} 条 · ${bufferedPages.size}/${bufferSize} 页",
+                color = Color.White.copy(alpha = 0.7f),
+                fontSize = 12.sp,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+        }
+        Text(
+            "直接导入",
+            color = Color(0xFF8FB6FF),
+            fontSize = 14.sp,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = 16.dp, bottom = 150.dp)
+                .background(Color.Black.copy(alpha = 0.4f),
+                        androidx.compose.foundation.shape.RoundedCornerShape(18.dp))
+                .clickable {
+                    if (bufferedPages.isNotEmpty()) {
+                        onResult(bufferedPages.toSortedMap().values.joinToString("\n"))
+                    }
+                }
+                .padding(horizontal = 14.dp, vertical = 10.dp)
+        )
+    }
+
+    // Freeze-frame shutter: a circular button over a larger translucent ring. Pressing
+    // shrinks the white dot only (the ring stays put); a clean release over-swings past
+    // 1.0 before settling (same rebound language as the card/FAB press feedback) and
+    // fires the deep decode.
+    val shutterScale = remember { androidx.compose.animation.core.Animatable(1f) }
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .align(Alignment.BottomCenter)
+            .padding(bottom = 84.dp)
+            .size(76.dp)
+    ) {
+        Box(
+            Modifier
+                .size(76.dp)
+                .background(Color.Gray.copy(alpha = 0.4f),
+                        androidx.compose.foundation.shape.CircleShape)
+        )
+        Box(
+            Modifier
+                .size(64.dp)
+                .graphicsLayer {
+                    scaleX = shutterScale.value
+                    scaleY = shutterScale.value
+                }
+                .background(Color.White,
+                        androidx.compose.foundation.shape.CircleShape)
+                .pointerInput(Unit) {
+                    detectTapGestures(
+                            onPress = {
+                                shutterScale.animateTo(0.9f,
+                                        androidx.compose.animation.core.tween(100))
+                                val released = try {
+                                    awaitRelease()
+                                    true
+                                } catch (e: Exception) {
+                                    false
+                                }
+                                if (released) {
+                                    shutterScale.animateTo(1.06f,
+                                            androidx.compose.animation.core.tween(130))
+                                    shutterScale.animateTo(1f,
+                                            androidx.compose.animation.core.spring(
+                                                    Spring.DampingRatioMediumBouncy,
+                                                    Spring.StiffnessMediumLow))
+                                    freezeAndDecode()
+                                } else {
+                                    shutterScale.animateTo(1f,
+                                            androidx.compose.animation.core.spring(
+                                                    Spring.DampingRatioNoBouncy,
+                                                    Spring.StiffnessMedium))
+                                }
+                            })
+                }
+        )
+    }
 
     // Prompt near the bottom.
     Text(

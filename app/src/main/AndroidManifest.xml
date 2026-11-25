@@ -106,6 +106,17 @@
             android:screenOrientation="portrait"
             android:theme="@style/AppTheme" />
 
+        <!-- System camera writes the capture here via ACTION_IMAGE_CAPTURE (TakePicture). -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
         <!-- Manifest-declared so the answer still arrives while this app sits in the background
              and the system has frozen its process. A runtime receiver is not seen as live in that
              state, so the broadcast would be dropped. -->

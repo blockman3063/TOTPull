@@ -105,19 +105,26 @@ public final class TransferManagerDialog {
         for (CheckBox check : checks) {
             check.setOnCheckedChangeListener((button, checked) -> syncHead.run());
         }
+        // The guard matters here: syncHead mirrors this box's state after every row change,
+        // and without the early return that setChecked would re-enter this listener and
+        // stomp every row back to the box's old value.
         selectAll.setOnCheckedChangeListener((button, checked) -> {
-            // The user tapped the box: apply its new state to every row.
-            for (CheckBox check : checks) {
-                if (check.isChecked() != checked) {
-                    check.setChecked(checked);
-                }
+            if (syncing[0]) {
+                return;
             }
+            syncing[0] = true;
+            for (CheckBox check : checks) {
+                check.setChecked(checked);
+            }
+            syncing[0] = false;
             syncHead.run();
         });
         invert.setOnClickListener(v -> {
+            syncing[0] = true;
             for (CheckBox check : checks) {
                 check.setChecked(!check.isChecked());
             }
+            syncing[0] = false;
             syncHead.run();
         });
 

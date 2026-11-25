@@ -25,7 +25,7 @@
     <string name="copied">已复制 %1$s</string>
     <string name="entry_menu_desc">拖动排序 / 分享</string>
     <string name="entry_menu_share">分享</string>
-    <string name="entry_menu_share_code">分享验证码</string>
+    <string name="entry_menu_share_qr">二维码分享</string>
     <string name="entry_menu_share_uri">分享 otpauth 链接</string>
     <string name="entry_menu_deeplink">发送到验证器</string>
     <string name="entry_menu_bw_secret">复制 Bitwarden Authenticator 密钥</string>
@@ -212,4 +212,5 @@
     <string name="transfer_type_hotp">HOTP</string>
     <string name="transfer_type_totp">TOTP</string>
     <string name="scan_gallery_no_qr">这张图片里没有识别到二维码</string>
+    <string name="scan_capture_failed">拍摄失败，请重试</string>
 </resources>
