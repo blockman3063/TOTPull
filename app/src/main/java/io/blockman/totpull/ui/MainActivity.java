@@ -12,7 +12,10 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
+import android.view.LayoutInflater;
 import android.view.View;
+import android.view.ViewGroup;
+import android.widget.ArrayAdapter;
 import android.widget.EditText;
 import android.widget.CheckBox;
 import android.widget.ImageView;
@@ -22,6 +25,7 @@ import android.widget.RadioGroup;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import androidx.appcompat.app.AppCompatActivity;
@@ -1070,13 +1074,33 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
     }
 
     private void showExtractTargets() {
-        String[] labels = new String[EXTRACT_TARGETS.length];
-        for (int i = 0; i < EXTRACT_TARGETS.length; i++) {
-            labels[i] = EXTRACT_TARGETS[i].label;
-        }
+        ArrayAdapter<ExtractTarget> adapter = new ArrayAdapter<ExtractTarget>(
+                this, R.layout.item_extract_target, EXTRACT_TARGETS) {
+            @NonNull
+            @Override
+            public View getView(int position, View convertView, @NonNull ViewGroup parent) {
+                View row = convertView;
+                if (row == null) {
+                    row = LayoutInflater.from(getContext())
+                            .inflate(R.layout.item_extract_target, parent, false);
+                }
+                ExtractTarget target = getItem(position);
+                if (target != null) {
+                    ((TextView) row.findViewById(R.id.target_label)).setText(target.label);
+                    // Every target answers the module broadcast; Aegis and Microsoft
+                    // Authenticator also expose an independent root route.
+                    boolean rootCapable = AEGIS_PACKAGE.equals(target.packageName)
+                            || AZURE_PACKAGE.equals(target.packageName);
+                    row.findViewById(R.id.target_lsposed).setVisibility(View.VISIBLE);
+                    row.findViewById(R.id.target_root).setVisibility(
+                            rootCapable ? View.VISIBLE : View.GONE);
+                }
+                return row;
+            }
+        };
         new MaterialAlertDialogBuilder(this)
                 .setTitle(R.string.probe_title)
-                .setItems(labels, (d, which) -> startProbe(EXTRACT_TARGETS[which]))
+                .setAdapter(adapter, (d, which) -> startProbe(EXTRACT_TARGETS[which]))
                 .show();
     }
 
