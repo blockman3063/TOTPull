@@ -14,7 +14,9 @@ import android.os.Looper;
 import android.util.Log;
 import android.view.View;
 import android.widget.EditText;
+import android.widget.CheckBox;
 import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.RadioButton;
 import android.widget.RadioGroup;
 import android.widget.TextView;
@@ -188,18 +190,25 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
     @Override
     public void showFilterDialog() {
         View view = getLayoutInflater().inflate(R.layout.dialog_filter, null);
-        RadioGroup sourceGroup = view.findViewById(R.id.filter_source_group);
-        RadioGroup typeGroup = view.findViewById(R.id.filter_type_group);
+        LinearLayout sourceGroup = view.findViewById(R.id.filter_source_group);
+        LinearLayout typeGroup = view.findViewById(R.id.filter_type_group);
+        RadioGroup sortGroup = view.findViewById(R.id.filter_sort_group);
 
-        // Filter selection lives in UiBridge so the Compose list updates live.
-        String selectedSource = UiBridge.INSTANCE.readFilterSource();
-        String selectedType = UiBridge.INSTANCE.readFilterType();
+        // Multi-select checkboxes: sources and types combine freely, which keeps the dialog
+        // usable once many source apps have been imported. An empty selection means the
+        // dimension is unrestricted ("不勾选 = 全部"), so no separate "all" row is needed
+        // and checkbox state always mirrors the live filter set.
+        Set<String> selectedSources = UiBridge.INSTANCE.readFilterSources();
+        Set<String> selectedTypes = UiBridge.INSTANCE.readFilterTypes();
+        String selectedSort = UiBridge.INSTANCE.readSortMode();
 
-        addRadio(sourceGroup, getString(R.string.filter_all), null, selectedSource == null);
         Set<String> sources = new LinkedHashSet<>();
         for (TotpEntry e : _entries) {
             sources.add(e.sourcePackage == null ? "" : e.sourcePackage);
         }
+        // Resolve each package to its display label first, then offer them alphabetically
+        // (hand-added entries last), instead of whatever order the vault happens to hold.
+        List<String[]> sourceOptions = new ArrayList<>();
         for (String pkg : sources) {
             String label;
             if (pkg.isEmpty()) {
@@ -215,31 +224,81 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
                 }
                 label = found.isEmpty() ? pkg : found;
             }
-            addRadio(sourceGroup, label, pkg, pkg.equals(selectedSource));
+            sourceOptions.add(new String[]{pkg, label});
+        }
+        sourceOptions.sort((a, b) -> {
+            boolean aLocal = a[0].isEmpty();
+            boolean bLocal = b[0].isEmpty();
+            if (aLocal != bLocal) {
+                return aLocal ? 1 : -1;
+            }
+            return a[1].compareToIgnoreCase(b[1]);
+        });
+        for (String[] option : sourceOptions) {
+            addCheck(sourceGroup, option[1], option[0], selectedSources.contains(option[0]));
         }
 
-        addRadio(typeGroup, getString(R.string.filter_all), null, selectedType == null);
-        addRadio(typeGroup, getString(R.string.filter_type_totp), TotpEntry.TYPE_TOTP,
-                TotpEntry.TYPE_TOTP.equals(selectedType));
-        addRadio(typeGroup, getString(R.string.filter_type_hotp), TotpEntry.TYPE_HOTP,
-                TotpEntry.TYPE_HOTP.equals(selectedType));
-        addRadio(typeGroup, getString(R.string.filter_type_steam), TotpEntry.TYPE_STEAM,
-                TotpEntry.TYPE_STEAM.equals(selectedType));
+        addCheck(typeGroup, getString(R.string.filter_type_totp), TotpEntry.TYPE_TOTP,
+                selectedTypes.contains(TotpEntry.TYPE_TOTP));
+        addCheck(typeGroup, getString(R.string.filter_type_hotp), TotpEntry.TYPE_HOTP,
+                selectedTypes.contains(TotpEntry.TYPE_HOTP));
+        addCheck(typeGroup, getString(R.string.filter_type_steam), TotpEntry.TYPE_STEAM,
+                selectedTypes.contains(TotpEntry.TYPE_STEAM));
+        addCheck(typeGroup, getString(R.string.filter_type_other), "other",
+                selectedTypes.contains("other"));
 
-        sourceGroup.setOnCheckedChangeListener((group, checkedId) ->
-                UiBridge.INSTANCE.setFilterSource(tagOf(group, checkedId)));
-        typeGroup.setOnCheckedChangeListener((group, checkedId) ->
-                UiBridge.INSTANCE.setFilterType(tagOf(group, checkedId)));
+        // Sort order shared with the transfer manager (UiBridge.sortMode).
+        addRadio(sortGroup, getString(R.string.sort_custom), UiBridge.SORT_CUSTOM,
+                UiBridge.SORT_CUSTOM.equals(selectedSort));
+        addRadio(sortGroup, getString(R.string.sort_name), UiBridge.SORT_NAME,
+                UiBridge.SORT_NAME.equals(selectedSort));
+        addRadio(sortGroup, getString(R.string.sort_recent), UiBridge.SORT_RECENT,
+                UiBridge.SORT_RECENT.equals(selectedSort));
+
+        // Toggling a box writes straight into the live UiBridge set, so the list behind
+        // the dialog updates as choices are made.
+        hookMultiSelect(sourceGroup, value ->
+                UiBridge.INSTANCE.setFilterSources(toggle(UiBridge.INSTANCE.readFilterSources(), value)));
+        hookMultiSelect(typeGroup, value ->
+                UiBridge.INSTANCE.setFilterTypes(toggle(UiBridge.INSTANCE.readFilterTypes(), value)));
+        sortGroup.setOnCheckedChangeListener((group, checkedId) -> {
+            String value = tagOf(group, checkedId);
+            if (value != null) {
+                UiBridge.INSTANCE.setSortMode(value);
+            }
+        });
 
         new MaterialAlertDialogBuilder(this)
                 .setTitle(R.string.filter_title)
                 .setView(view)
                 .setNeutralButton(R.string.filter_reset, (d, w) -> {
-                    UiBridge.INSTANCE.setFilterSource(null);
-                    UiBridge.INSTANCE.setFilterType(null);
+                    UiBridge.INSTANCE.setFilterSources(java.util.Collections.emptySet());
+                    UiBridge.INSTANCE.setFilterTypes(java.util.Collections.emptySet());
+                    UiBridge.INSTANCE.setSortMode(UiBridge.SORT_CUSTOM);
                 })
                 .setPositiveButton(R.string.filter_done, null)
                 .show();
+    }
+
+    /** Adds or removes {@code value} from a live filter set. */
+    private static Set<String> toggle(Set<String> current, String value) {
+        Set<String> next = new LinkedHashSet<>(current);
+        if (!next.remove(value)) {
+            next.add(value);
+        }
+        return next;
+    }
+
+    /** Wires a multi-select checkbox group: each tap toggles its tag in the live set. */
+    private void hookMultiSelect(LinearLayout group, java.util.function.Consumer<String> onChange) {
+        for (int i = 0; i < group.getChildCount(); i++) {
+            View child = group.getChildAt(i);
+            if (child instanceof CheckBox) {
+                CheckBox box = (CheckBox) child;
+                box.setOnCheckedChangeListener((button, isChecked) ->
+                        onChange.accept((String) button.getTag()));
+            }
+        }
     }
 
     @Override
@@ -301,10 +360,26 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
     /** A radio's tag is its filter value; the "all" option carries no tag. */
     private static void addRadio(RadioGroup group, String label, String value, boolean checked) {
         RadioButton radio = new RadioButton(group.getContext());
+        // RadioGroup.addView records a pre-checked child's id BEFORE its hierarchy listener
+        // generates one, so a radio that is checked prior to addView leaves the group's
+        // bookkeeping pointing at NO_ID: the next tap then clears nothing and two radios
+        // end up checked at once. Assign the id up front and route the initial selection
+        // through group.check(), which maintains the exclusivity properly.
+        radio.setId(View.generateViewId());
         radio.setText(label);
         radio.setTag(value); // null is fine: it marks "all"
-        radio.setChecked(checked);
         group.addView(radio);
+        if (checked) {
+            group.check(radio.getId());
+        }
+    }
+
+    private static void addCheck(LinearLayout group, String label, String value, boolean checked) {
+        CheckBox box = new CheckBox(group.getContext());
+        box.setText(label);
+        box.setTag(value);
+        box.setChecked(checked);
+        group.addView(box);
     }
 
     private static String tagOf(RadioGroup group, int checkedId) {
@@ -477,7 +552,7 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
         single.add(entry);
         TransferManagerDialog.show(this, getString(R.string.transfer_import_title),
                 getString(R.string.transfer_summary_import, 1, source),
-                single, false, selected -> {
+                single, false, null, selected -> {
                     if (!selected.isEmpty()) {
                         insertEntry(entry);
                     }
@@ -625,25 +700,19 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
     // ------------------------------------------------------------------ export all
 
     /**
-     * Whole-vault export, offered from the info page. The manager runs first so the user picks
-     * which entries leave; both formats then go through the share sheet, so saving to a file is
-     * whatever the user's share targets provide.
+     * Whole-vault export, offered from the info page. The format (mode) is picked first because
+     * it decides which entries can leave — the Google migration modes cannot carry Steam tokens;
+     * the manager then greys out whatever the chosen mode does not support.
      */
     private void exportAll() {
         if (_entries.isEmpty()) {
             toast(getString(R.string.export_empty));
             return;
         }
-        TransferManagerDialog.show(this, getString(R.string.transfer_export_title),
-                getString(R.string.transfer_summary_export, _entries.size()),
-                _entries, true, this::showExportFormatDialog);
+        showExportFormatDialog(new ArrayList<>(_entries));
     }
 
-    private void showExportFormatDialog(List<TotpEntry> selected) {
-        if (selected.isEmpty()) {
-            toast(getString(R.string.export_empty));
-            return;
-        }
+    private void showExportFormatDialog(List<TotpEntry> candidates) {
         String[] formats = {
                 getString(R.string.export_otpauth),
                 getString(R.string.export_aegis),
@@ -653,27 +722,58 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
         new MaterialAlertDialogBuilder(this)
                 .setTitle(R.string.export_title)
                 .setItems(formats, (d, which) -> {
-                    try {
-                        if (which == 0) {
-                            shareExport("text/plain",
-                                    getString(R.string.export_subject, selected.size()),
-                                    io.blockman.totpull.format.ExportEngine.toOtpauthText(selected));
-                        } else if (which == 1) {
-                            shareExport("application/json",
-                                    getString(R.string.export_subject, selected.size()),
-                                    io.blockman.totpull.format.ExportEngine.toAegisJson(selected));
-                        } else if (which == 2) {
-                            shareDeeplink(selected);
+                    // Google migration (deep link / QR) has no Steam representation; otpauth
+                    // text and Aegis JSON carry everything we can generate a code for.
+                    boolean migration = which == 2 || which == 3;
+                    java.util.Set<TotpEntry> unsupported = new LinkedHashSet<>();
+                    int supported = 0;
+                    for (TotpEntry e : candidates) {
+                        boolean ok = e.isSupported() && (!migration || !e.isSteam());
+                        if (ok) {
+                            supported++;
                         } else {
-                            showMigrationQrDialog(selected);
+                            unsupported.add(e);
                         }
-                    } catch (Exception e) {
-                        android.util.Log.e("TOTPull", "export failed", e);
-                        toast(getString(R.string.export_failed) + "：" + e.getMessage());
                     }
+                    if (supported == 0) {
+                        toast(getString(R.string.export_empty));
+                        return;
+                    }
+                    String summary = getString(R.string.transfer_summary_export_full,
+                            candidates.size(), supported);
+                    final int mode = which;
+                    TransferManagerDialog.show(this, getString(R.string.transfer_export_title),
+                            summary, candidates, true, unsupported,
+                            selected -> dispatchExport(mode, selected));
                 })
                 .setNegativeButton(R.string.cancel, null)
                 .show();
+    }
+
+    /** Runs the export the user confirmed in the manager, with the mode picked earlier. */
+    private void dispatchExport(int which, List<TotpEntry> selected) {
+        if (selected.isEmpty()) {
+            toast(getString(R.string.export_empty));
+            return;
+        }
+        try {
+            if (which == 0) {
+                shareExport("text/plain",
+                        getString(R.string.export_subject, selected.size()),
+                        io.blockman.totpull.format.ExportEngine.toOtpauthText(selected));
+            } else if (which == 1) {
+                shareExport("application/json",
+                        getString(R.string.export_subject, selected.size()),
+                        io.blockman.totpull.format.ExportEngine.toAegisJson(selected));
+            } else if (which == 2) {
+                shareDeeplink(selected);
+            } else {
+                showMigrationQrDialog(selected);
+            }
+        } catch (Exception e) {
+            android.util.Log.e("TOTPull", "export failed", e);
+            toast(getString(R.string.export_failed) + "：" + e.getMessage());
+        }
     }
 
     private void shareExport(String mime, String subject, String body) {
@@ -987,7 +1087,7 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
             String source = summarizeSources(incoming);
             TransferManagerDialog.show(this, getString(R.string.transfer_import_title),
                     getString(R.string.transfer_summary_import, incoming.size(), source),
-                    incoming, false, selected -> {
+                    incoming, false, null, selected -> {
                         if (selected.isEmpty()) {
                             return;
                         }
@@ -1283,7 +1383,7 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
         // the broadcast probe would only pull the same batch again.
         TransferManagerDialog.show(this, getString(R.string.transfer_import_title),
                 getString(R.string.transfer_summary_import, incoming.size(), target.label),
-                incoming, false, selected -> {
+                incoming, false, null, selected -> {
                     if (selected.isEmpty()) {
                         return;
                     }
@@ -1456,13 +1556,19 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
                 toast(getString(R.string.import_failed));
                 return;
             }
-            byte[] buffer = new byte[8 * 1024 * 1024];
-            int read = is.read(buffer);
-            if (read <= 0) {
+            // Read to EOF: a single read() from a DocumentsProvider pipe may return fewer
+            // bytes than the file holds, which used to truncate large vaults into garbage.
+            java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
+            byte[] chunk = new byte[64 * 1024];
+            int read;
+            while ((read = is.read(chunk)) > 0) {
+                buffer.write(chunk, 0, read);
+            }
+            if (buffer.size() <= 0) {
                 toast(getString(R.string.import_failed));
                 return;
             }
-            applyImport(new String(buffer, 0, read, StandardCharsets.UTF_8));
+            applyImport(new String(buffer.toByteArray(), StandardCharsets.UTF_8));
         } catch (Exception e) {
             toast(getString(R.string.import_failed));
         }
@@ -1502,7 +1608,8 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
         final String afterHint = hint.toString();
         TransferManagerDialog.show(this, getString(R.string.transfer_import_title),
                 getString(R.string.transfer_summary_import, result.entries.size(), formatLabel),
-                result.entries, false, selected -> saveImported(selected, formatLabel, afterHint));
+                result.entries, false, null,
+                selected -> saveImported(selected, formatLabel, afterHint));
     }
 
     /** Writes the manager's selection into the vault and reports the outcome. */

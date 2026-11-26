@@ -117,14 +117,21 @@ public final class ImportEngine {
                 }
             }
 
-            String secret = TotpGenerator.normalizeAnySecret(t);
-            if (TotpGenerator.isValidBase32(secret)) {
-                result.detectedFormat = "裸 secret";
-                TotpEntry entry = new TotpEntry();
-                entry.secret = secret;
-                entry.issuer = "未命名";
-                entry.name = "";
-                result.entries.add(entry);
+            // A bare secret is a single token: base32/hex/base64 with at most spaces,
+            // dashes and padding around it. Anything carrying JSON/URI punctuation is a
+            // format we failed to parse — without this guard the base64 fallback below
+            // would strip that punctuation off and "decode" the remainder into a
+            // plausible-looking fake secret, so every structured file imported as one.
+            if (t.matches("[A-Za-z0-9+=\\-\\s]+")) {
+                String secret = TotpGenerator.normalizeAnySecret(t);
+                if (TotpGenerator.isValidBase32(secret)) {
+                    result.detectedFormat = "裸 secret";
+                    TotpEntry entry = new TotpEntry();
+                    entry.secret = secret;
+                    entry.issuer = "未命名";
+                    entry.name = "";
+                    result.entries.add(entry);
+                }
             }
         } catch (Exception e) {
             result.warnings.add(String.valueOf(e.getMessage()));
@@ -177,6 +184,8 @@ public final class ImportEngine {
             TotpEntry entry = TotpEntry.fromOtpauth(candidate);
             if (entry == null) {
                 result.warnings.add("跳过一条无法解析的 otpauth URI");
+            } else if (!entry.isSupported()) {
+                result.warnings.add("跳过一条不支持的类型（mOTP / Yandex）");
             } else {
                 result.entries.add(entry);
             }
@@ -245,8 +254,18 @@ public final class ImportEngine {
                     return;
                 }
                 if (root.has("entries")) {
-                    result.detectedFormat = "通用 JSON";
-                    parseGenericEntries(root.optJSONArray("entries"), result);
+                    JSONArray entries = root.optJSONArray("entries");
+                    JSONObject first = entries == null ? null : entries.optJSONObject(0);
+                    if (first != null && first.has("info")) {
+                        // Plaintext Aegis export: the secret hides in entry.info instead of
+                        // the top level, so the generic parser would silently drop every row
+                        // and the whole file would end up at the bare-secret fallback.
+                        result.detectedFormat = "Aegis JSON";
+                        parseAegis(root, result);
+                    } else {
+                        result.detectedFormat = "通用 JSON";
+                        parseGenericEntries(entries, result);
+                    }
                 }
                 return;
             }
@@ -273,6 +292,11 @@ public final class ImportEngine {
 
     private static void parseAegis(JSONObject root, Result result) {
         JSONObject db = root.optJSONObject("db");
+        if (db == null && root.has("entries") && root.has("version")) {
+            // Plaintext export: the vault content sits directly on the root object rather
+            // than under "db" like the wrapper we build after decrypting an encrypted vault.
+            db = root;
+        }
         if (db == null) {
             return;
         }
@@ -328,6 +352,12 @@ public final class ImportEngine {
                 entry.type = TotpEntry.TYPE_MOTP;
             } else {
                 entry.type = TotpEntry.TYPE_TOTP;
+            }
+            // mOTP / Yandex are disabled app-wide: importing them would create invisible
+            // entries, so parsed rows of those types are dropped with a warning.
+            if (!entry.isSupported()) {
+                result.warnings.add("跳过一条不支持的类型（mOTP / Yandex）");
+                continue;
             }
 
             JSONArray groupIds = o.optJSONArray("groups");
@@ -415,6 +445,9 @@ public final class ImportEngine {
 
             String type = o.optString("type", "TOTP").toUpperCase(Locale.ROOT);
             entry.type = type.contains("HOTP") ? TotpEntry.TYPE_HOTP : TotpEntry.TYPE_TOTP;
+            if (!entry.isSupported()) {
+                continue;
+            }
 
             JSONArray tags = o.optJSONArray("tags");
             if (tags != null && tags.length() > 0) {
@@ -471,6 +504,9 @@ public final class ImportEngine {
             }
             entry.issuer = issuer;
             entry.name = account;
+            if (!entry.isSupported()) {
+                continue;
+            }
 
             JSONArray groups = o.optJSONArray("group");
             if (groups != null && groups.length() > 0) {
@@ -516,6 +552,9 @@ public final class ImportEngine {
                 entry.type = TotpEntry.TYPE_HOTP;
             } else if (type.contains("STEAM")) {
                 entry.type = TotpEntry.TYPE_STEAM;
+            }
+            if (!entry.isSupported()) {
+                continue;
             }
 
             entry.sourceLabel = "FreeOTP";

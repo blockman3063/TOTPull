@@ -291,11 +291,14 @@ private fun CodesPage() {
     // the user types, picks a filter, or folds a group.
     UiBridge.dataVersion.intValue
     val query = UiBridge.query.value.trim().lowercase(Locale.ROOT)
-    val source = UiBridge.filterSource.value
-    val type = UiBridge.filterType.value
+    val sources = UiBridge.filterSources.value
+    val types = UiBridge.filterTypes.value
+    val sortMode = UiBridge.sortMode.value
     val collapsed = UiBridge.collapsed.toSet()
-    val entries = UiBridge.host?.entries() ?: emptyList()
-    val computed = buildRows(context, entries, query, source, type, collapsed)
+    // mOTP / Yandex cannot produce codes and are disabled app-wide: never listed, never
+    // exported, never offered in the editor. They stay in the vault file untouched.
+    val entries = (UiBridge.host?.entries() ?: emptyList()).filter { it.isSupported() }
+    val computed = buildRows(context, entries, query, sources, types, sortMode, collapsed)
     val rowsState = rememberUpdatedState(computed)
 
     // Live countdown: codes and progress bars repaint twice a second.
@@ -340,6 +343,11 @@ private fun CodesPage() {
             // Hysteresis: swap only once the finger crossed the target's center, so
             // hovering a row boundary cannot flicker back and forth.
             val checkSwap: (Float) -> Unit = checkSwap@{ rawY ->
+                // Only the custom (vault-order) mode is drag-adjustable; a sorted view
+                // would revert every swap on the next rebuild anyway.
+                if (sortMode != UiBridge.SORT_CUSTOM) {
+                    return@checkSwap
+                }
                 val layout = listState.layoutInfo
                 val y = rawY.coerceIn(
                     layout.viewportStartOffset.toFloat(),
@@ -422,6 +430,11 @@ private fun CodesPage() {
                 // A fly-back is in progress: ignore new grabs until it lands (a few
                 // hundred ms), otherwise two drags would fight over the overlay.
                 if (dragVisual.settling) {
+                    return@probe false
+                }
+                // Sorted views cannot reorder: a swap would be reverted on the next
+                // rebuild, so the handle does nothing there.
+                if (sortMode != UiBridge.SORT_CUSTOM) {
                     return@probe false
                 }
                 val layout = listState.layoutInfo
@@ -526,13 +539,14 @@ private fun buildRows(
     context: Context,
     entries: List<TotpEntry>,
     query: String,
-    source: String?,
-    type: String?,
+    sources: Set<String>,
+    types: Set<String>,
+    sortMode: String,
     collapsed: Set<String>
 ): List<CodesRow> {
     val groups = LinkedHashMap<String, MutableList<TotpEntry>>()
     for (entry in entries) {
-        if (!matches(entry, query, source, type)) {
+        if (!matches(entry, query, sources, types)) {
             continue
         }
         val key = entry.sourcePackage ?: ""
@@ -553,6 +567,14 @@ private fun buildRows(
     val rows = ArrayList<CodesRow>()
     for (key in keys) {
         val bucket = groups.getValue(key)
+        // Custom keeps the vault order (and drag reordering works); the other modes sort
+        // inside each group, since grouping by source stays the anchor of the page.
+        when (sortMode) {
+            UiBridge.SORT_NAME -> bucket.sortBy {
+                (it.issuer + "\n" + it.name).lowercase(Locale.ROOT)
+            }
+            UiBridge.SORT_RECENT -> bucket.sortByDescending { it.lastUsedAt }
+        }
         val hue = groupHue(key)
         val title = if (key.isEmpty()) {
             context.getString(R.string.local_source)
@@ -570,20 +592,25 @@ private fun buildRows(
     return rows
 }
 
-private fun matches(entry: TotpEntry, query: String, source: String?, type: String?): Boolean {
-    if (source != null && (entry.sourcePackage ?: "") != source) {
+private fun matches(entry: TotpEntry, query: String, sources: Set<String>, types: Set<String>): Boolean {
+    // Multi-select: every non-empty dimension admits the entry if it hits any choice.
+    if (sources.isNotEmpty() && (entry.sourcePackage ?: "") !in sources) {
         return false
     }
-    if (type != null && !typeMatches(entry, type)) {
+    if (types.isNotEmpty() && types.none { typeMatches(entry, it) }) {
         return false
     }
     if (query.isEmpty()) {
         return true
     }
-    return contains(entry.issuer, query) || contains(entry.name, query) ||
-            contains(entry.group, query) || contains(entry.note, query) ||
-            contains(entry.sourceLabel, query) || contains(entry.sourcePackage, query) ||
-            contains(entry.type, query)
+    // Space-separated tokens must all hit somewhere, so "github work" narrows faster
+    // than a single blob of text.
+    return query.split(Regex("\\s+")).all { token ->
+        token.isNotEmpty() && (contains(entry.issuer, token) || contains(entry.name, token) ||
+                contains(entry.group, token) || contains(entry.note, token) ||
+                contains(entry.sourceLabel, token) || contains(entry.sourcePackage, token) ||
+                contains(entry.type, token))
+    }
 }
 
 private fun contains(value: String?, query: String): Boolean {
@@ -629,17 +656,34 @@ private fun SearchBar() {
             modifier = Modifier.weight(1f)
         )
         Spacer(Modifier.width(10.dp))
-        val active = UiBridge.isFiltering()
+
+        // Compact pill with the number of active dimensions, so the state stays readable
+        // no matter how long the label text would get ("筛选" alone looks inactive).
+        val activeCount = UiBridge.filterSources.value.size +
+                UiBridge.filterTypes.value.size +
+                if (UiBridge.query.value.isNotBlank()) 1 else 0
+        val shape = RoundedCornerShape(18.dp)
+        val tint = if (activeCount > 0) {
+            MiuixTheme.colorScheme.primary
+        } else {
+            MiuixTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+        }
         Text(
-            text = stringResource(if (active) R.string.filter_active else R.string.filter_title),
-            fontSize = 14.sp,
-            fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
-            color = if (active) {
-                MiuixTheme.colorScheme.primary
+            text = if (activeCount > 0) {
+                stringResource(R.string.filter_chip_active, activeCount)
             } else {
-                MiuixTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                stringResource(R.string.filter_chip_idle)
             },
-            modifier = Modifier.clickable { UiBridge.host?.showFilterDialog() }
+            fontSize = 14.sp,
+            fontWeight = if (activeCount > 0) FontWeight.Bold else FontWeight.Normal,
+            color = tint,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            modifier = Modifier
+                .clip(shape)
+                .border(1.dp, tint.copy(alpha = 0.5f), shape)
+                .clickable { UiBridge.host?.showFilterDialog() }
+                .padding(horizontal = 14.dp, vertical = 9.dp)
         )
     }
 }

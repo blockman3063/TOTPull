@@ -81,9 +81,23 @@ object UiBridge {
     /** Search text; blank means no filter. */
     val query = mutableStateOf("")
 
-    /** Filter dimensions; null = unrestricted, "" = hand-added entries. */
-    val filterSource = mutableStateOf<String?>(null)
-    val filterType = mutableStateOf<String?>(null)
+    /**
+     * Filter dimensions, multi-select: empty = unrestricted. Source values are package
+     * names ("" = hand-added entries); type values are TotpEntry types plus "other".
+     */
+    val filterSources = mutableStateOf<Set<String>>(emptySet())
+    val filterTypes = mutableStateOf<Set<String>>(emptySet())
+
+    /** Sort modes shared by the codes page and the transfer manager. */
+    const val SORT_CUSTOM = "custom"
+    const val SORT_NAME = "name"
+    const val SORT_RECENT = "recent"
+
+    /**
+     * How entries are ordered inside their group: vault order (drag-adjustable), by name,
+     * or by last use. Shared so the manager shows the same order the main list does.
+     */
+    val sortMode = mutableStateOf(SORT_CUSTOM)
 
     /** Group keys (sourcePackage) the user folded; survives rebuilds and filters. */
     val collapsed = mutableStateListOf<String>()
@@ -111,16 +125,22 @@ object UiBridge {
         tab.intValue = value
     }
 
-    fun readFilterSource(): String? = filterSource.value
+    fun readFilterSources(): Set<String> = filterSources.value
 
-    fun setFilterSource(value: String?) {
-        filterSource.value = value
+    fun setFilterSources(value: Set<String>) {
+        filterSources.value = value
     }
 
-    fun readFilterType(): String? = filterType.value
+    fun readFilterTypes(): Set<String> = filterTypes.value
 
-    fun setFilterType(value: String?) {
-        filterType.value = value
+    fun setFilterTypes(value: Set<String>) {
+        filterTypes.value = value
+    }
+
+    fun readSortMode(): String = sortMode.value
+
+    fun setSortMode(value: String) {
+        sortMode.value = value
     }
 
     fun setModuleReady(value: Boolean?) {
@@ -138,7 +158,8 @@ object UiBridge {
 
     /** True when any filter dimension or a non-blank query is set. */
     fun isFiltering(): Boolean {
-        return query.value.isNotBlank() || filterSource.value != null || filterType.value != null
+        return query.value.isNotBlank()
+                || filterSources.value.isNotEmpty() || filterTypes.value.isNotEmpty()
     }
 }
 

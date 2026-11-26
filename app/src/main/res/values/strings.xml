@@ -132,12 +132,20 @@
     <string name="filter_source">来源</string>
     <string name="filter_type">类型</string>
     <string name="filter_reset">重置</string>
+    <string name="filter_multi_hint">不勾选 = 全部显示，可多选</string>
     <string name="filter_done">完成</string>
     <string name="filter_active">筛选中</string>
+    <string name="filter_chip_idle">筛选</string>
+    <string name="filter_chip_active">筛选 · %1$d</string>
     <string name="filter_type_totp">TOTP</string>
     <string name="filter_type_hotp">HOTP</string>
     <string name="filter_type_steam">Steam</string>
     <string name="filter_type_other">其他</string>
+    <string name="filter_sort">排序</string>
+    <string name="sort_custom">自定义顺序（可拖拽调整）</string>
+    <string name="sort_name">按名称</string>
+    <string name="sort_recent">按最近使用</string>
+    <string name="transfer_no_match">没有匹配的条目</string>
     <string name="empty_filtered_title">没有匹配的验证码</string>
     <string name="empty_filtered_hint">换个关键词，或把筛选条件重置一下。</string>
 
@@ -203,6 +211,7 @@
     <string name="transfer_export_title">导出确认</string>
     <string name="transfer_summary_import">本次导入 %1$d 条 · 来源：%2$s</string>
     <string name="transfer_summary_export">本次导出 %1$d 条</string>
+    <string name="transfer_summary_export_full">共 %1$d 条 · 支持导出 %2$d 条</string>
     <string name="transfer_selected">已选 %1$d 条</string>
     <string name="transfer_select_all">全选</string>
     <string name="transfer_invert">反转</string>

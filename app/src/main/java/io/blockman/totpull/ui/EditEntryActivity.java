@@ -30,7 +30,7 @@ import io.blockman.totpull.TotpStore;
 public class EditEntryActivity extends AppCompatActivity {
     public static final String EXTRA_ID = "entry_id";
 
-    private static final String[] TYPES = {"TOTP", "HOTP", "Steam", "Yandex", "MOTP"};
+    private static final String[] TYPES = {"TOTP", "HOTP", "Steam"};
     private static final String[] ALGORITHMS = {"SHA1", "SHA256", "SHA512"};
 
     private TotpStore _store;
@@ -160,12 +160,8 @@ public class EditEntryActivity extends AppCompatActivity {
         if (TotpEntry.TYPE_STEAM.equals(type)) {
             return "Steam";
         }
-        if (TotpEntry.TYPE_YANDEX.equals(type)) {
-            return "Yandex";
-        }
-        if (TotpEntry.TYPE_MOTP.equals(type)) {
-            return "MOTP";
-        }
+        // Disabled types (Yandex / MOTP) fall back to TOTP in the editor; their data is
+        // preserved in the vault, they are just not offered as choices.
         return "TOTP";
     }
 
@@ -175,12 +171,6 @@ public class EditEntryActivity extends AppCompatActivity {
         }
         if ("Steam".equals(label)) {
             return TotpEntry.TYPE_STEAM;
-        }
-        if ("Yandex".equals(label)) {
-            return TotpEntry.TYPE_YANDEX;
-        }
-        if ("MOTP".equals(label)) {
-            return TotpEntry.TYPE_MOTP;
         }
         return TotpEntry.TYPE_TOTP;
     }

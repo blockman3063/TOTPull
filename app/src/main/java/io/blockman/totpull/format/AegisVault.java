@@ -84,6 +84,7 @@ public final class AegisVault {
 
             byte[] master = null;
             boolean sawBiometric = false;
+            int passwordSlots = 0;
             for (int i = 0; i < slots.length(); i++) {
                 JSONObject slot = slots.optJSONObject(i);
                 if (slot == null) {
@@ -101,6 +102,7 @@ public final class AegisVault {
                 if (params == null) {
                     continue;
                 }
+                passwordSlots++;
                 try {
                     byte[] salt = fromHex(slot.optString("salt", ""));
                     int n = slot.optInt("n", 0);
@@ -109,20 +111,45 @@ public final class AegisVault {
                     if (n <= 1 || r <= 0 || p <= 0) {
                         continue;
                     }
-                    byte[] wrapping = Scrypt.derive(password, salt, n, r, p, 32);
+                    // Java's GCM wants ciphertext||tag; Aegis stores them separately.
+                    byte[] input = concat(fromHex(slot.optString("key", "")),
+                            fromHex(params.optString("tag", "")));
+                    byte[] nonce = fromHex(params.optString("nonce", ""));
                     try {
-                        byte[] keyCandidate = gcmDecrypt(wrapping,
-                                fromHex(params.optString("nonce", "")),
-                                concat(fromHex(slot.optString("key", "")),
-                                        fromHex(params.optString("tag", ""))));
-                        if (keyCandidate.length == 32) {
-                            master = keyCandidate;
-                            break;
+                        byte[] wrapping = Scrypt.derive(password, salt, n, r, p, 32);
+                        try {
+                            byte[] keyCandidate = gcmDecrypt(wrapping, nonce, input);
+                            if (keyCandidate.length == 32) {
+                                master = keyCandidate;
+                                break;
+                            }
+                        } finally {
+                            Arrays.fill(wrapping, (byte) 0);
                         }
                     } catch (AEADBadTagException e) {
                         // This slot uses a different password (or is corrupt). Try the next.
-                    } finally {
-                        Arrays.fill(wrapping, (byte) 0);
+                    }
+                    // Aegis issue #95: slots created by old builds were wrapped with a key
+                    // derived from the legacy, misaligned encoder path. Short passwords
+                    // encode identically either way, so only those slots (repaired == false)
+                    // need the second attempt; Aegis itself keeps the same legacy function.
+                    if (!slot.optBoolean("repaired", false)) {
+                        try {
+                            byte[] legacy = toBytesOld(password);
+                            byte[] wrapping = Scrypt.derive(legacy, salt, n, r, p, 32);
+                            Arrays.fill(legacy, (byte) 0);
+                            try {
+                                byte[] keyCandidate = gcmDecrypt(wrapping, nonce, input);
+                                if (keyCandidate.length == 32) {
+                                    master = keyCandidate;
+                                    break;
+                                }
+                            } finally {
+                                Arrays.fill(wrapping, (byte) 0);
+                            }
+                        } catch (AEADBadTagException e) {
+                            // The legacy derivation does not match this slot either.
+                        }
                     }
                 } catch (IllegalArgumentException e) {
                     // Hostile scrypt parameters, bad hex/base64. Skip this slot.
@@ -130,7 +157,17 @@ public final class AegisVault {
             }
 
             if (master == null) {
-                Reason reason = sawBiometric ? Reason.BIOMETRIC_ONLY : Reason.WRONG_PASSWORD;
+                Reason reason;
+                if (passwordSlots > 0) {
+                    // A password slot exists and refused our password — that is a wrong
+                    // password even when a biometric slot is also present. Reporting
+                    // biometric-only here used to mislabel perfectly valid backups.
+                    reason = Reason.WRONG_PASSWORD;
+                } else if (sawBiometric) {
+                    reason = Reason.BIOMETRIC_ONLY;
+                } else {
+                    reason = Reason.BAD_FORMAT;
+                }
                 throw new AegisException(reason, "no password slot could be opened", null);
             }
             try {
@@ -162,6 +199,19 @@ public final class AegisVault {
         cipher.init(Cipher.DECRYPT_MODE, new SecretKeySpec(key, "AES"),
                 new GCMParameterSpec(128, nonce));
         return cipher.doFinal(input);
+    }
+
+    /**
+     * The legacy byte conversion behind Aegis issue #95: instead of copying the encoded
+     * bytes out, it returned the whole backing array of the encoder's buffer, which for
+     * passwords whose UTF-8 form crosses a 64-byte block adds trailing bytes — a "misaligned"
+     * password, so scrypt produces a different key than the correct conversion would. Kept
+     * verbatim and only used for {@code repaired: false} slots, exactly like Aegis does.
+     */
+    private static byte[] toBytesOld(char[] chars) {
+        java.nio.CharBuffer charBuf = java.nio.CharBuffer.wrap(chars);
+        java.nio.ByteBuffer byteBuf = StandardCharsets.UTF_8.encode(charBuf);
+        return byteBuf.array();
     }
 
     private static byte[] fromBase64(String value) {

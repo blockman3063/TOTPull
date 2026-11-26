@@ -20,7 +20,14 @@
             android:textSize="14sp"
             android:textStyle="bold" />
 
-        <RadioGroup
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/filter_multi_hint"
+            android:textColor="@color/text_secondary"
+            android:textSize="12sp" />
+
+        <LinearLayout
             android:id="@+id/filter_source_group"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -36,8 +43,24 @@
             android:textSize="14sp"
             android:textStyle="bold" />
 
-        <RadioGroup
+        <LinearLayout
             android:id="@+id/filter_type_group"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:orientation="vertical" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/filter_sort"
+            android:textColor="@color/text_primary"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <RadioGroup
+            android:id="@+id/filter_sort_group"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
