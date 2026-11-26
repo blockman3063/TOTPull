@@ -192,6 +192,8 @@
     <string name="deeplink_pick_title">选择要导入的验证器</string>
     <string name="deeplink_batch_title">选择要发送的批次</string>
     <string name="deeplink_batch_item">第 %1$d / %2$d 批 · 条目 %3$d–%4$d</string>
+    <string name="deeplink_batch_sent_mark"> · 已发送 ✓</string>
+    <string name="deeplink_all_sent">全部批次已发送完成</string>
     <string name="deeplink_no_handler">没有验证器支持深链导入，可用「Google 验证器二维码」方式</string>
     <string name="deeplink_sent">已交给 %1$s 导入</string>
     <string name="deeplink_fallback_qr">本机的验证器不支持批量深链导入，改用二维码方式</string>

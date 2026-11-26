@@ -412,6 +412,26 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
         // Show whatever came back as soon as we are back in front of the user.
         showProbeReport();
 
+        // Back from the deeplink chooser: mark the batch green and re-offer the menu, so a
+        // multi-batch export keeps going without rebuilding the whole flow. Fires only when
+        // a send was actually handed off (_deeplinkPending is set right before the chooser).
+        if (_deeplinkPending >= 0 && _deeplinkBatches != null && _deeplinkSent != null) {
+            if (_deeplinkPending < _deeplinkSent.length) {
+                _deeplinkSent[_deeplinkPending] = true;
+            }
+            _deeplinkPending = -1;
+            boolean allSent = true;
+            for (boolean b : _deeplinkSent) {
+                allSent = allSent && b;
+            }
+            if (allSent) {
+                clearDeeplinkState();
+                toast(getString(R.string.deeplink_all_sent));
+            } else if (!isFinishing()) {
+                showDeeplinkBatchMenu();
+            }
+        }
+
         if (_moduleReady == null && Capabilities.hasRoot(this)) {
             new Thread(() -> {
                 Boolean ready = Capabilities.snapshotExists(this);
@@ -787,10 +807,21 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
     // ------------------------------------------------------------------ migration deeplink / QR
 
     /**
+     * In-progress deeplink batch export; null when idle. Kept across the chooser hand-off so
+     * that onResume can re-offer the batch menu — the same flow the scan screen uses for
+     * multi-page Google migration QRs: send one batch, come back, keep going.
+     */
+    private List<String> _deeplinkBatches;
+    private boolean[] _deeplinkSent;
+    private int _deeplinkPending = -1;
+    private int _deeplinkTotalEntries;
+    private androidx.appcompat.app.AlertDialog _deeplinkDialog;
+
+    /**
      * Sends the whole vault as otpauth-migration deeplink INTENTS. Unlike sharing the link as
      * text, an ACTION_VIEW hand-off puts the URI straight into another validator's import flow.
      * The migration format carries at most ten entries per link; more than that asks which batch
-     * to send first.
+     * to send first, then returns to the same menu after every send (sent batches turn green).
      */
     private void shareDeeplink(List<TotpEntry> entries) {
         List<String> uris = io.blockman.totpull.format.MigrationExporter.toMigrationUris(entries);
@@ -802,17 +833,63 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
             sendDeeplink(uris.get(0));
             return;
         }
-        String[] items = new String[uris.size()];
-        for (int i = 0; i < uris.size(); i++) {
+        _deeplinkBatches = uris;
+        _deeplinkSent = new boolean[uris.size()];
+        _deeplinkPending = -1;
+        _deeplinkTotalEntries = entries.size();
+        showDeeplinkBatchMenu();
+    }
+
+    /**
+     * The batch picker. Rebuilt (with fresh green marks) on every re-show, so the state in
+     * {@code _deeplinkSent} is the single source of truth. Sent batches stay clickable: that
+     * is the "re-send" path in case the target app dropped the import.
+     */
+    private void showDeeplinkBatchMenu() {
+        final List<String> batches = _deeplinkBatches;
+        int total = batches.size();
+        String[] items = new String[total];
+        for (int i = 0; i < total; i++) {
             int from = i * 10 + 1;
-            int to = Math.min((i + 1) * 10, entries.size());
-            items[i] = getString(R.string.deeplink_batch_item, i + 1, uris.size(), from, to);
+            int to = Math.min((i + 1) * 10, _deeplinkTotalEntries);
+            items[i] = getString(R.string.deeplink_batch_item, i + 1, total, from, to);
         }
-        new MaterialAlertDialogBuilder(this)
+        android.widget.ArrayAdapter<String> adapter =
+                new android.widget.ArrayAdapter<String>(this,
+                        android.R.layout.simple_list_item_1, items) {
+                    @Override
+                    public View getView(int position, View convertView,
+                            android.view.ViewGroup parent) {
+                        View row = super.getView(position, convertView, parent);
+                        TextView text = row.findViewById(android.R.id.text1);
+                        if (_deeplinkSent != null && _deeplinkSent[position]) {
+                            text.setTextColor(0xFF1E8E3E);
+                            text.append(getString(R.string.deeplink_batch_sent_mark));
+                        }
+                        return row;
+                    }
+                };
+        _deeplinkDialog = new MaterialAlertDialogBuilder(this)
                 .setTitle(R.string.deeplink_batch_title)
-                .setItems(items, (d, which) -> sendDeeplink(uris.get(which)))
-                .setNegativeButton(R.string.cancel, null)
+                .setAdapter(adapter, (d, which) -> {
+                    _deeplinkPending = which;
+                    if (_deeplinkDialog != null) {
+                        _deeplinkDialog.dismiss();
+                    }
+                    sendDeeplink(batches.get(which));
+                })
+                .setNegativeButton(R.string.cancel, (d, w) -> clearDeeplinkState())
                 .show();
+    }
+
+    private void clearDeeplinkState() {
+        _deeplinkBatches = null;
+        _deeplinkSent = null;
+        _deeplinkPending = -1;
+        if (_deeplinkDialog != null && _deeplinkDialog.isShowing()) {
+            _deeplinkDialog.dismiss();
+        }
+        _deeplinkDialog = null;
     }
 
     private void sendDeeplink(String uri) {

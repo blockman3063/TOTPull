@@ -28,14 +28,14 @@ import io.blockman.totpull.TotpEntry;
 
 /**
  * The import/export confirmation manager. Lists every entry that is about to move, all ticked
- * by default, with a select-all toggle, an invert button, a search box and the same sort
- * modes the codes page uses; the callback receives only the entries that are still ticked
- * when the user confirms. Confirming with zero entries selected is impossible - the positive
- * button disables itself.
+ * by default, with a select-all toggle, an invert button and a search box; the callback
+ * receives only the entries that are still ticked when the user confirms. Confirming with
+ * zero entries selected is impossible - the positive button disables itself.
  *
- * <p>Search and sort only shape the view: the tick state lives in a per-entry map, so hiding
- * rows never silently changes what gets exported, and select-all/invert keep acting on every
- * selectable entry, visible or not.
+ * <p>Search only shapes the view: the tick state lives in a per-entry map, so hiding rows
+ * never silently changes what gets exported, and select-all/invert keep acting on every
+ * selectable entry, visible or not. Rows are always alphabetical — vault order and
+ * last-use are meaningless inside a pick list.
  */
 public final class TransferManagerDialog {
 
@@ -64,7 +64,6 @@ public final class TransferManagerDialog {
         TextView summaryView = view.findViewById(R.id.tm_summary);
         CheckBox selectAll = view.findViewById(R.id.tm_select_all);
         View invert = view.findViewById(R.id.btn_invert);
-        View sortButton = view.findViewById(R.id.btn_sort);
         EditText searchInput = view.findViewById(R.id.tm_search);
         TextView noMatch = view.findViewById(R.id.tm_no_match);
         LinearLayout list = view.findViewById(R.id.tm_list);
@@ -93,7 +92,6 @@ public final class TransferManagerDialog {
         // carries its own guard so select-all can call it while "syncing" is held.
         final boolean[] syncing = {false};
         final boolean[] rebuilding = {false};
-        final String[] sortMode = {UiBridge.INSTANCE.readSortMode()};
         final String[] query = {""};
 
         Runnable syncHead = () -> {
@@ -130,12 +128,14 @@ public final class TransferManagerDialog {
             rebuilding[0] = true;
             list.removeAllViews();
             List<TotpEntry> visible = new ArrayList<>();
-            for (TotpEntry entry : entries) {
+            for (TotpEntry entry : shown) {
                 if (entryMatches(entry, query[0])) {
                     visible.add(entry);
                 }
             }
-            sortEntries(visible, sortMode[0]);
+            // Always alphabetical in the manager: vault order and last-use make no sense
+            // for a pick list, and dragging does not exist here.
+            sortEntries(visible);
             noMatch.setVisibility(visible.isEmpty() ? View.VISIBLE : View.GONE);
             for (TotpEntry entry : visible) {
                 boolean ok = !blocked.contains(entry);
@@ -177,8 +177,9 @@ public final class TransferManagerDialog {
             if (syncing[0]) {
                 return;
             }
-            syncing[0] = true;
-            // Acts on every selectable entry, not just the ones the search shows.
+            // Acts on every selectable entry, not just the ones the search shows. No manual
+            // flag juggling here: syncHead() guards itself when it writes the checkbox back,
+            // and rebuildRows() carries its own guard, so both run with the flag cleared.
             for (TotpEntry entry : shown) {
                 if (!blocked.contains(entry)) {
                     checked.put(entry, tick);
@@ -188,10 +189,6 @@ public final class TransferManagerDialog {
             syncHead.run();
         });
         invert.setOnClickListener(v -> {
-            if (syncing[0]) {
-                return;
-            }
-            syncing[0] = true;
             for (TotpEntry entry : shown) {
                 if (!blocked.contains(entry)) {
                     checked.put(entry, !Boolean.TRUE.equals(checked.get(entry)));
@@ -199,33 +196,6 @@ public final class TransferManagerDialog {
             }
             rebuildRows.run();
             syncHead.run();
-        });
-        sortButton.setOnClickListener(v -> {
-            String[] modes = {
-                    activity.getString(R.string.sort_custom),
-                    activity.getString(R.string.sort_name),
-                    activity.getString(R.string.sort_recent),
-            };
-            int current;
-            if (UiBridge.SORT_NAME.equals(sortMode[0])) {
-                current = 1;
-            } else if (UiBridge.SORT_RECENT.equals(sortMode[0])) {
-                current = 2;
-            } else {
-                current = 0;
-            }
-            new MaterialAlertDialogBuilder(activity)
-                    .setTitle(R.string.filter_sort)
-                    .setSingleChoiceItems(modes, current, (d, which) -> {
-                        String mode = which == 1 ? UiBridge.SORT_NAME
-                                : which == 2 ? UiBridge.SORT_RECENT : UiBridge.SORT_CUSTOM;
-                        sortMode[0] = mode;
-                        // Shared with the codes page: both views follow the same order.
-                        UiBridge.INSTANCE.setSortMode(mode);
-                        d.dismiss();
-                        rebuildRows.run();
-                    })
-                    .show();
         });
         searchInput.addTextChangedListener(new TextWatcher() {
             @Override
@@ -299,14 +269,10 @@ public final class TransferManagerDialog {
         return value == null ? "" : value;
     }
 
-    /** Mirrors the codes page ordering; "custom" keeps the vault order. */
-    private static void sortEntries(List<TotpEntry> list, String sortMode) {
-        if (UiBridge.SORT_NAME.equals(sortMode)) {
-            list.sort((a, b) -> (safe(a.issuer) + "\n" + safe(a.name))
-                    .compareToIgnoreCase(safe(b.issuer) + "\n" + safe(b.name)));
-        } else if (UiBridge.SORT_RECENT.equals(sortMode)) {
-            list.sort((a, b) -> Long.compare(b.lastUsedAt, a.lastUsedAt));
-        }
+    /** Alphabetical by issuer then account — the only ordering that helps picking here. */
+    private static void sortEntries(List<TotpEntry> list) {
+        list.sort((a, b) -> (safe(a.issuer) + "\n" + safe(a.name))
+                .compareToIgnoreCase(safe(b.issuer) + "\n" + safe(b.name)));
     }
 
     private static String typeLabel(AppCompatActivity activity, TotpEntry entry) {

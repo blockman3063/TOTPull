@@ -101,17 +101,10 @@ import java.util.Locale
 private sealed class CodesRow
 
 /** One source-app bucket. Tapping folds it, long-pressing opens the group editor. */
-private class HeaderRow(val key: String, val title: String, val count: Int, val collapsed: Boolean, val hue: Float) : CodesRow()
+private class HeaderRow(val key: String, val title: String, val count: Int, val collapsed: Boolean) : CodesRow()
 
 /** One code card. */
 private class EntryRow(val entry: TotpEntry) : CodesRow()
-
-// Soft per-source hues: every validator app gets a stable accent for its group dot.
-private val GROUP_HUES = floatArrayOf(212f, 145f, 28f, 262f, 330f, 185f, 95f, 8f, 45f, 240f)
-
-private fun groupHue(key: String): Float {
-    return GROUP_HUES[Math.floorMod(key.hashCode(), GROUP_HUES.size)]
-}
 
 /**
  * One uniform card tone for every card: a neutral, slightly cool surface that exists
@@ -120,11 +113,6 @@ private fun groupHue(key: String): Float {
  */
 private fun cardTint(dark: Boolean): Color {
     return Color.hsl(215f, if (dark) 0.14f else 0.30f, if (dark) 0.16f else 0.98f)
-}
-
-/** Saturated accent for the group header dot. */
-private fun groupDot(hue: Float, dark: Boolean): Color {
-    return Color.hsl(hue, 0.55f, if (dark) 0.62f else 0.48f)
 }
 
 /**
@@ -173,7 +161,11 @@ fun MainScreen() {
             .pointerInput(Unit) {
                 detectDragGesturesAfterLongPress(
                     onDragStart = { offset ->
-                        UiBridge.drag.probe(offset.x, offset.y)
+                        // The root gesture exists on every tab; only the codes page owns
+                        // a drag handle, so it must never start on the info page.
+                        if (UiBridge.tab.intValue == 0) {
+                            UiBridge.drag.probe(offset.x, offset.y)
+                        }
                     },
                     onDrag = { change, dragAmount ->
                         change.consume()
@@ -437,6 +429,11 @@ private fun CodesPage() {
                 if (sortMode != UiBridge.SORT_CUSTOM) {
                     return@probe false
                 }
+                // Double guard against a stale closure: this lambda outlives the codes
+                // page's composition, so an info-page long-press could still reach it.
+                if (UiBridge.tab.intValue != 0) {
+                    return@probe false
+                }
                 val layout = listState.layoutInfo
                 val listY = y - dragVisual.containerTopInRoot
                 val info = layout.visibleItemsInfo.firstOrNull {
@@ -575,14 +572,13 @@ private fun buildRows(
             }
             UiBridge.SORT_RECENT -> bucket.sortByDescending { it.lastUsedAt }
         }
-        val hue = groupHue(key)
         val title = if (key.isEmpty()) {
             context.getString(R.string.local_source)
         } else {
             bucket[0].displaySource()
         }
         val isCollapsed = key in collapsed
-        rows.add(HeaderRow(key, title, bucket.size, isCollapsed, hue))
+        rows.add(HeaderRow(key, title, bucket.size, isCollapsed))
         if (!isCollapsed) {
             for (entry in bucket) {
                 rows.add(EntryRow(entry))
@@ -691,7 +687,6 @@ private fun SearchBar() {
 @Composable
 private fun GroupHeader(row: HeaderRow) {
     val countText = stringResource(R.string.entry_count, row.count)
-    val dark = isSystemInDarkTheme()
     Row(
         Modifier
             .fillMaxWidth()
@@ -711,13 +706,6 @@ private fun GroupHeader(row: HeaderRow) {
             fontSize = 12.sp,
             color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.5f),
             modifier = Modifier.graphicsLayer(rotationZ = if (row.collapsed) 0f else 90f)
-        )
-        Spacer(Modifier.width(8.dp))
-        Box(
-            Modifier
-                .size(10.dp)
-                .clip(CircleShape)
-                .background(groupDot(row.hue, dark))
         )
         Spacer(Modifier.width(8.dp))
         Column(Modifier.weight(1f)) {

@@ -11,6 +11,14 @@
     android:paddingEnd="16dp"
     android:paddingBottom="11dp">
 
+    <ImageView
+        android:id="@+id/row_icon"
+        android:layout_width="18dp"
+        android:layout_height="18dp"
+        android:layout_marginEnd="10dp"
+        android:contentDescription="@null"
+        android:visibility="gone" />
+
     <TextView
         android:id="@+id/row_label"
         android:layout_width="0dp"

@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.content.pm.PackageInfo;
 import android.view.LayoutInflater;
 import android.view.View;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -153,11 +154,11 @@ public class InfoPage {
             rootValue = str(R.string.row_root_unknown);
             rootColor = R.color.text_secondary;
         }
-        addRow(_groupPerm, str(R.string.row_root), rootValue, rootColor);
+        addRow(_groupPerm, R.drawable.ic_root_hash, str(R.string.row_root), rootValue, rootColor);
 
         // The module proving itself from inside the target app is the only state that matters;
         // whether it can also inject this app is a framework detail LSPosed does not allow.
-        addRow(_groupPerm, str(R.string.row_lsposed),
+        addRow(_groupPerm, R.drawable.ic_lsposed, str(R.string.row_lsposed),
                 str(moduleOk ? R.string.row_lsposed_on : R.string.row_lsposed_off),
                 moduleOk ? R.color.status_ok_text : R.color.text_secondary);
     }
@@ -196,7 +197,16 @@ public class InfoPage {
     // ------------------------------------------------------------------ row builders
 
     private void addRow(LinearLayout parent, String label, String value, int valueColor) {
+        addRow(parent, 0, label, value, valueColor);
+    }
+
+    private void addRow(LinearLayout parent, int iconRes, String label, String value, int valueColor) {
         View row = LayoutInflater.from(_activity).inflate(R.layout.item_info_row, parent, false);
+        ImageView icon = row.findViewById(R.id.row_icon);
+        if (iconRes != 0) {
+            icon.setVisibility(View.VISIBLE);
+            icon.setImageResource(iconRes);
+        }
         ((TextView) row.findViewById(R.id.row_label)).setText(label);
         TextView valueView = row.findViewById(R.id.row_value);
         valueView.setText(value);
