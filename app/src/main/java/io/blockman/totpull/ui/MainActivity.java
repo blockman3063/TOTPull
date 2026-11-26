@@ -1074,8 +1074,27 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
     }
 
     private void showExtractTargets() {
-        ArrayAdapter<ExtractTarget> adapter = new ArrayAdapter<ExtractTarget>(
-                this, R.layout.item_extract_target, EXTRACT_TARGETS) {
+        String[] labels = new String[EXTRACT_TARGETS.length];
+        boolean[] lsposed = new boolean[EXTRACT_TARGETS.length];
+        boolean[] root = new boolean[EXTRACT_TARGETS.length];
+        for (int i = 0; i < EXTRACT_TARGETS.length; i++) {
+            labels[i] = EXTRACT_TARGETS[i].label;
+            // Every target answers the module broadcast; Aegis and Microsoft
+            // Authenticator also expose an independent root route.
+            lsposed[i] = true;
+            root[i] = AEGIS_PACKAGE.equals(EXTRACT_TARGETS[i].packageName)
+                    || AZURE_PACKAGE.equals(EXTRACT_TARGETS[i].packageName);
+        }
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.probe_title)
+                .setAdapter(iconRowAdapter(labels, lsposed, root),
+                        (d, which) -> startProbe(EXTRACT_TARGETS[which]))
+                .show();
+    }
+
+    /** Dialog rows showing a label plus the LSPosed and root capability icons. */
+    private ArrayAdapter<String> iconRowAdapter(String[] labels, boolean[] lsposed, boolean[] root) {
+        return new ArrayAdapter<String>(this, R.layout.item_extract_target, labels) {
             @NonNull
             @Override
             public View getView(int position, View convertView, @NonNull ViewGroup parent) {
@@ -1084,24 +1103,14 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
                     row = LayoutInflater.from(getContext())
                             .inflate(R.layout.item_extract_target, parent, false);
                 }
-                ExtractTarget target = getItem(position);
-                if (target != null) {
-                    ((TextView) row.findViewById(R.id.target_label)).setText(target.label);
-                    // Every target answers the module broadcast; Aegis and Microsoft
-                    // Authenticator also expose an independent root route.
-                    boolean rootCapable = AEGIS_PACKAGE.equals(target.packageName)
-                            || AZURE_PACKAGE.equals(target.packageName);
-                    row.findViewById(R.id.target_lsposed).setVisibility(View.VISIBLE);
-                    row.findViewById(R.id.target_root).setVisibility(
-                            rootCapable ? View.VISIBLE : View.GONE);
-                }
+                ((TextView) row.findViewById(R.id.target_label)).setText(getItem(position));
+                row.findViewById(R.id.target_lsposed).setVisibility(
+                        lsposed[position] ? View.VISIBLE : View.GONE);
+                row.findViewById(R.id.target_root).setVisibility(
+                        root[position] ? View.VISIBLE : View.GONE);
                 return row;
             }
         };
-        new MaterialAlertDialogBuilder(this)
-                .setTitle(R.string.probe_title)
-                .setAdapter(adapter, (d, which) -> startProbe(EXTRACT_TARGETS[which]))
-                .show();
     }
 
     // ------------------------------------------------------------------ capabilities
@@ -1306,10 +1315,10 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
     private void showAegisRouteDialog(ExtractTarget target) {
         new MaterialAlertDialogBuilder(this)
                 .setTitle("Aegis 导入方式")
-                .setItems(new String[]{
-                        "模块直读",
-                        "Root 读文件",
-                }, (dialog, which) -> {
+                .setAdapter(iconRowAdapter(
+                        new String[]{"模块直读", "Root 读文件"},
+                        new boolean[]{true, false},
+                        new boolean[]{false, true}), (dialog, which) -> {
                     if (which == 0) {
                         probeViaBroadcast(target);
                     } else {
@@ -1345,10 +1354,10 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
     private void showAzureRouteDialog(ExtractTarget target) {
         new MaterialAlertDialogBuilder(this)
                 .setTitle("Microsoft Authenticator 导入方式")
-                .setItems(new String[]{
-                        "模块直读",
-                        "Root 读数据库",
-                }, (dialog, which) -> {
+                .setAdapter(iconRowAdapter(
+                        new String[]{"模块直读", "Root 读数据库"},
+                        new boolean[]{true, false},
+                        new boolean[]{false, true}), (dialog, which) -> {
                     if (which == 0) {
                         probeViaBroadcast(target);
                     } else {
