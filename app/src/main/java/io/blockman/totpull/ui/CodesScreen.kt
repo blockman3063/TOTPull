@@ -1229,6 +1229,10 @@ private fun InfoPageHost() {
                     override fun onExportAll() {
                         UiBridge.host?.onExportAll()
                     }
+
+                    override fun onPickLanguage() {
+                        UiBridge.host?.onPickLanguage()
+                    }
                 }
             )
             view

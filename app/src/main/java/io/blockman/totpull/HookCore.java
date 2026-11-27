@@ -240,14 +240,14 @@ public final class HookCore {
     private static void handleAegisProbe(Context context) {
         if (_aegisUris.length() == 0) {
             reply(context, false, null, null, null,
-                    "Aegis 还没解锁，请先解锁一次 Aegis，模块读到后会自动回来");
+                    ModuleStrings.get(context, "hook_aegis_locked"));
             return;
         }
         try {
             replyEntries(context, new org.json.JSONArray(_aegisUris.toString()));
         } catch (Throwable t) {
             log("aegis reply failed: " + t);
-            reply(context, false, null, null, null, "Aegis 条目封装失败");
+            reply(context, false, null, null, null, ModuleStrings.get(context, "hook_aegis_wrap_failed"));
         }
     }
 
@@ -651,13 +651,13 @@ public final class HookCore {
         if (secret == null) {
             int seen = INSTANCES.size();
             reply(context, false, null, null, null, seen == 0
-                    ? "模块还没捕获到加密存储，请在 Riot Mobile 里打开一次登录页"
-                    : "加密存储读到了，但里面还没有验证码，先在 Riot Mobile 里生成一次");
+                    ? ModuleStrings.get(context, "hook_riot_no_storage")
+                    : ModuleStrings.get(context, "hook_riot_no_codes"));
             return;
         }
         secret = normalizeSecret(secret);
         if (secret.isEmpty()) {
-            reply(context, false, null, null, null, "拿到的密钥格式无法识别");
+            reply(context, false, null, null, null, ModuleStrings.get(context, "hook_riot_bad_key"));
             return;
         }
 
@@ -730,7 +730,7 @@ public final class HookCore {
         }
         if (uris.length() == 0) {
             reply(context, false, null, null, null,
-                    "没能从谷歌验证器读到验证码账号，确认它已经登录并显示过验证码");
+                    ModuleStrings.get(context, "hook_ga_no_accounts"));
             return;
         }
         Application app = _application;
@@ -790,7 +790,7 @@ public final class HookCore {
         }
         if (uris.length() == 0) {
             reply(context, false, null, null, null,
-                    "没能从 Microsoft Authenticator 读到验证码账号，确认它已经登录并显示过验证码");
+                    ModuleStrings.get(context, "hook_azure_no_accounts"));
             return;
         }
         Application app = _application;
@@ -919,7 +919,7 @@ public final class HookCore {
         String secret = _steamSecret;
         if (secret == null) {
             reply(context, false, null, null, null,
-                    "没读到 Steam Guard 密钥，确认这台机器上登录过 Steam 手机令牌");
+                    ModuleStrings.get(context, "hook_steam_no_secret"));
             return;
         }
         String account = _steamAccount == null ? "" : _steamAccount;

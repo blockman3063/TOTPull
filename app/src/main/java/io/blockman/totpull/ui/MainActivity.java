@@ -1,5 +1,6 @@
 package io.blockman.totpull.ui;
 
+import android.app.Activity;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
@@ -57,6 +58,11 @@ import io.blockman.totpull.format.ImportEngine;
  * back through {@link UiBridge.Host}. The activity no longer owns any views of its own.
  */
 public class MainActivity extends AppCompatActivity implements UiBridge.Host {
+    @Override
+    protected void attachBaseContext(android.content.Context base) {
+        super.attachBaseContext(io.blockman.totpull.LocaleHelper.wrap(base));
+    }
+
     /** Optional extras so an extractor can stamp the originating app onto the entry. */
     public static final String EXTRA_SOURCE_PACKAGE = "source_package";
     public static final String EXTRA_SOURCE_LABEL = "source_label";
@@ -89,7 +95,7 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
     static final ExtractTarget[] EXTRACT_TARGETS = {
             new ExtractTarget("com.riotgames.mobile.leagueconnect", "Riot Mobile"),
             new ExtractTarget("com.valvesoftware.android.steam.community", "Steam"),
-            new ExtractTarget("com.google.android.apps.authenticator2", "谷歌验证器"),
+            new ExtractTarget("com.google.android.apps.authenticator2", "Google Authenticator"),
             new ExtractTarget(AEGIS_PACKAGE, "Aegis"),
             new ExtractTarget(AZURE_PACKAGE, "Microsoft Authenticator"),
     };
@@ -97,10 +103,25 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
     static final class ExtractTarget {
         final String packageName;
         final String label;
+        final int labelRes;
 
         ExtractTarget(String packageName, String label) {
+            this(packageName, label, 0);
+        }
+
+        ExtractTarget(String packageName, int labelRes) {
+            this(packageName, "", labelRes);
+        }
+
+        private ExtractTarget(String packageName, String label, int labelRes) {
             this.packageName = packageName;
             this.label = label;
+            this.labelRes = labelRes;
+        }
+
+        /** Resolved display name; use this everywhere instead of the raw field. */
+        String label(Activity activity) {
+            return labelRes == 0 ? label : activity.getString(labelRes);
         }
     }
 
@@ -359,6 +380,34 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
     @Override
     public void onExportAll() {
         exportAll();
+    }
+
+    @Override
+    public void onPickLanguage() {
+        showLanguageDialog();
+    }
+
+    /**
+     * Per-app language switch. The choice lives in the app's own preferences and is
+     * applied by {@code LocaleHelper.wrap} on every activity; recreate() picks it up
+     * immediately for this screen.
+     */
+    private void showLanguageDialog() {
+        String[] options = {getString(R.string.language_system), getString(R.string.language_zh),
+                getString(R.string.language_en)};
+        String current = io.blockman.totpull.LocaleHelper.current(this);
+        int selected = current.startsWith("zh") ? 1 : current.startsWith("en") ? 2 : 0;
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.language)
+                .setSingleChoiceItems(options, selected, (d, which) -> {
+                    d.dismiss();
+                    String tag = which == 1 ? "zh-CN" : which == 2 ? "en" : "";
+                    if (!tag.equals(io.blockman.totpull.LocaleHelper.current(this))) {
+                        io.blockman.totpull.LocaleHelper.set(this, tag);
+                        recreate();
+                    }
+                })
+                .show();
     }
 
     /** A radio's tag is its filter value; the "all" option carries no tag. */
@@ -925,7 +974,8 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
         com.google.android.material.dialog.MaterialAlertDialogBuilder builder =
                 new MaterialAlertDialogBuilder(this)
                         .setTitle(getString(R.string.export_qr_title)
-                                + (uris.size() > 1 ? "（共 " + uris.size() + " 页）" : ""))
+                                + (uris.size() > 1
+                                ? getString(R.string.qr_pages_suffix, uris.size()) : ""))
                         .setView(view)
                         .setPositiveButton(R.string.close, null);
 
@@ -1078,7 +1128,7 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
         boolean[] lsposed = new boolean[EXTRACT_TARGETS.length];
         boolean[] root = new boolean[EXTRACT_TARGETS.length];
         for (int i = 0; i < EXTRACT_TARGETS.length; i++) {
-            labels[i] = EXTRACT_TARGETS[i].label;
+            labels[i] = EXTRACT_TARGETS[i].label(this);
             // Every target answers the module broadcast; Aegis and Microsoft
             // Authenticator also expose an independent root route.
             lsposed[i] = true;
@@ -1255,7 +1305,7 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
         long since = ProbeReceiver.pendingSince(this);
         if (since > 0 && System.currentTimeMillis() - since > PROBE_TIMEOUT_MS) {
             ProbeReceiver.clearPending(this);
-            String label = _pendingProbe == null ? "Riot Mobile" : _pendingProbe.label;
+            String label = _pendingProbe == null ? "Riot Mobile" : _pendingProbe.label(this);
             _pendingProbe = null;
             _handler.removeCallbacks(_probeTimeout);
             new MaterialAlertDialogBuilder(this)
@@ -1276,7 +1326,7 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
      */
     private void startProbe(ExtractTarget target) {
         if (!isInstalled(target.packageName)) {
-            toast(getString(R.string.probe_not_installed, target.label));
+            toast(getString(R.string.probe_not_installed, target.label(this)));
             return;
         }
         if (AEGIS_PACKAGE.equals(target.packageName)) {
@@ -1291,7 +1341,7 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
             return;
         }
         if (Capabilities.hasRoot(this) && Capabilities.fastPathEnabled(this)) {
-            toast(getString(R.string.probe_requesting, target.label));
+            toast(getString(R.string.probe_requesting, target.label(this)));
             new Thread(() -> {
                 String body = Capabilities.readSnapshot(this, target.packageName);
                 runOnUiThread(() -> {
@@ -1314,9 +1364,10 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
     /** Aegis has two valid transports: the unlocked in-memory vault, or the encrypted file. */
     private void showAegisRouteDialog(ExtractTarget target) {
         new MaterialAlertDialogBuilder(this)
-                .setTitle("Aegis 导入方式")
+                .setTitle(R.string.route_aegis_title)
                 .setAdapter(iconRowAdapter(
-                        new String[]{"模块直读", "Root 读文件"},
+                        new String[]{getString(R.string.route_module_read),
+                                getString(R.string.route_root_file)},
                         new boolean[]{true, false},
                         new boolean[]{false, true}), (dialog, which) -> {
                     if (which == 0) {
@@ -1335,14 +1386,14 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
             int rootState = Capabilities.detectRoot(this);
             if (rootState != Capabilities.ROOT_GRANTED) {
                 runOnUiThread(() -> toast(rootState == Capabilities.ROOT_TIMEOUT
-                        ? "root 检测超时，请在授权管理器里允许 TOTPull 后重试"
-                        : "读 Aegis 需要 root；没有 root 请用文件导入"));
+                        ? getString(R.string.root_timeout_hint)
+                        : getString(R.string.root_needed_aegis)));
                 return;
             }
             String vault = Capabilities.readAegisVault();
             runOnUiThread(() -> {
                 if (vault == null) {
-                    toast("读不到 Aegis vault：" + Capabilities.lastDiagnostic);
+                    toast(getString(R.string.aegis_vault_unreadable, Capabilities.lastDiagnostic));
                 } else {
                     askAegisPassword(vault);
                 }
@@ -1353,9 +1404,10 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
     /** Azure has two transports: module read (no root) or root database read. */
     private void showAzureRouteDialog(ExtractTarget target) {
         new MaterialAlertDialogBuilder(this)
-                .setTitle("Microsoft Authenticator 导入方式")
+                .setTitle(R.string.route_azure_title)
                 .setAdapter(iconRowAdapter(
-                        new String[]{"模块直读", "Root 读数据库"},
+                        new String[]{getString(R.string.route_module_read),
+                                getString(R.string.route_root_db)},
                         new boolean[]{true, false},
                         new boolean[]{false, true}), (dialog, which) -> {
                     if (which == 0) {
@@ -1372,15 +1424,15 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
             int rootState = Capabilities.detectRoot(this);
             if (rootState != Capabilities.ROOT_GRANTED) {
                 runOnUiThread(() -> toast(rootState == Capabilities.ROOT_TIMEOUT
-                        ? "root 检测超时，请在授权管理器里允许 TOTPull 后重试"
-                        : "读 Microsoft Authenticator 需要 root；没有 root 请用文件导入"));
+                        ? getString(R.string.root_timeout_hint)
+                        : getString(R.string.root_needed_azure)));
                 return;
             }
             File db = Capabilities.copyAzureDatabase(this);
             org.json.JSONArray uris = db == null ? null : readAzureAccounts(db);
             runOnUiThread(() -> {
                 if (uris == null || uris.length() == 0) {
-                    toast("读不到 Microsoft Authenticator 数据：" + Capabilities.lastDiagnostic);
+                    toast(getString(R.string.azure_db_unreadable, Capabilities.lastDiagnostic));
                 } else {
                     applySnapshotBatch(target, uris);
                 }
@@ -1449,7 +1501,7 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
                 return false;
             }
             entry.sourcePackage = target.packageName;
-            entry.sourceLabel = target.label;
+            entry.sourceLabel = target.label(this);
 
             String puuid = json.optString("puuid", "");
             String created = json.optString("created_at", "");
@@ -1482,7 +1534,7 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
                 continue;
             }
             entry.sourcePackage = target.packageName;
-            entry.sourceLabel = target.label;
+            entry.sourceLabel = target.label(this);
             incoming.add(entry);
         }
         if (incoming.isEmpty()) {
@@ -1492,7 +1544,7 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
         // true even when the user declines: the snapshot was parsed fine, so falling back to
         // the broadcast probe would only pull the same batch again.
         TransferManagerDialog.show(this, getString(R.string.transfer_import_title),
-                getString(R.string.transfer_summary_import, incoming.size(), target.label),
+                getString(R.string.transfer_summary_import, incoming.size(), target.label(this)),
                 incoming, false, null, selected -> {
                     if (selected.isEmpty()) {
                         return;
@@ -1510,7 +1562,7 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
                         return;
                     }
                     reload();
-                    toast(getString(R.string.import_ok, target.label, selected.size()));
+                    toast(getString(R.string.import_ok, target.label(this), selected.size()));
                 });
         return true;
     }
@@ -1541,7 +1593,7 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
 
     /** Launches the source app and starts asking it for the seed. */
     private void startProbeRound(ExtractTarget target) {
-        toast(getString(R.string.probe_go_hint, target.label));
+        toast(getString(R.string.probe_go_hint, target.label(this)));
 
         launchTarget(target);
         for (int delay : PROBE_RETRY_MS) {
@@ -1701,17 +1753,17 @@ public class MainActivity extends AppCompatActivity implements UiBridge.Host {
         // Nothing touches the vault yet: the manager lists what was parsed and the user
         // picks which rows come in. Duplicate secrets are allowed to coexist - cleaning
         // them up stays a separate, explicit operation.
-        StringBuilder format = new StringBuilder(
-                result.detectedFormat.isEmpty() ? "文本" : result.detectedFormat);
+        StringBuilder format = new StringBuilder(result.detectedFormat.isEmpty()
+                ? getString(R.string.format_plain_text) : result.detectedFormat);
         StringBuilder hint = new StringBuilder();
         if (result.migrationSize > 1) {
             // Google exports split accounts across pages; show the collected progress and
             // remind the user that missing pages still need importing.
-            format.append("（已收集 ").append(result.migrationPages).append(" / ")
-                    .append(result.migrationSize).append(" 页）");
+            format.append(getString(R.string.migration_collected_suffix,
+                    result.migrationPages, result.migrationSize));
             if (result.migrationPages < result.migrationSize) {
-                hint.append("，还有 ").append(result.migrationSize - result.migrationPages)
-                        .append(" 页未导入");
+                hint.append(getString(R.string.migration_remaining_prefix,
+                        result.migrationSize - result.migrationPages));
             }
         }
         final String formatLabel = format.toString();

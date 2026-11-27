@@ -26,6 +26,11 @@ import io.blockman.totpull.TotpStore;
  * group header - no intermediate menu, mirroring how an entry long-press opens its editor.
  */
 public class EditGroupActivity extends AppCompatActivity {
+@Override
+    protected void attachBaseContext(android.content.Context base) {
+        super.attachBaseContext(io.blockman.totpull.LocaleHelper.wrap(base));
+    }
+
     public static final String EXTRA_PACKAGE = "group_package";
 
     private TotpStore _store;

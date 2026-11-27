@@ -34,6 +34,8 @@ public class InfoPage {
         void onStart();
 
         void onExportAll();
+
+        void onPickLanguage();
     }
 
     private final Activity _activity;
@@ -189,9 +191,10 @@ public class InfoPage {
             if (targets.length() > 0) {
                 targets.append(" / ");
             }
-            targets.append(t.label);
+            targets.append(t.label(_activity));
         }
         addRow(_groupAbout, str(R.string.row_target), targets.toString(), R.color.text_secondary);
+        addClickableRow(_groupAbout, str(R.string.language), v -> _listener.onPickLanguage());
     }
 
     // ------------------------------------------------------------------ row builders

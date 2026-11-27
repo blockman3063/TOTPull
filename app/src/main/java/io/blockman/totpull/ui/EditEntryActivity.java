@@ -28,6 +28,11 @@ import io.blockman.totpull.TotpStore;
 
 /** Editor modelled on Aegis' entry dialog: same fields, same order. */
 public class EditEntryActivity extends AppCompatActivity {
+@Override
+    protected void attachBaseContext(android.content.Context base) {
+        super.attachBaseContext(io.blockman.totpull.LocaleHelper.wrap(base));
+    }
+
     public static final String EXTRA_ID = "entry_id";
 
     private static final String[] TYPES = {"TOTP", "HOTP", "Steam"};
@@ -228,7 +233,7 @@ public class EditEntryActivity extends AppCompatActivity {
         _entry.counter = parseLong(text(_counter), 0);
 
         if (_entry.issuer.isEmpty()) {
-            _entry.issuer = _entry.name.isEmpty() ? "未命名" : _entry.name;
+            _entry.issuer = _entry.name;
         }
 
         boolean replaced = false;

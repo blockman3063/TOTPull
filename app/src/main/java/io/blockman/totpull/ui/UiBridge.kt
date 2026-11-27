@@ -56,6 +56,7 @@ object UiBridge {
         /** InfoPage "start" button: finish first-run setup and land on the codes page. */
         fun onSetupStart()
         fun onExportAll()
+        fun onPickLanguage()
     }
 
     @Volatile

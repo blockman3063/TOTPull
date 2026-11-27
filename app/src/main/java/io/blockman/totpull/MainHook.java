@@ -204,7 +204,7 @@ public class MainHook extends XposedModule {
     private static String label(String pkg) {
         if (RIOT.equals(pkg)) return "Riot Mobile";
         if (STEAM.equals(pkg)) return "Steam";
-        if (GA.equals(pkg)) return "谷歌验证器";
+        if (GA.equals(pkg)) return "Google Authenticator";
         if (AEGIS.equals(pkg)) return "Aegis";
         if (AZURE.equals(pkg)) return "Microsoft Authenticator";
         return pkg;

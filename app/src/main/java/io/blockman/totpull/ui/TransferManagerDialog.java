@@ -153,7 +153,7 @@ public final class TransferManagerDialog {
                 String source = entry.displaySource();
                 meta.setText(typeLabel(activity, entry)
                         + (source.isEmpty() ? "" : " · " + source)
-                        + (ok ? "" : " · 当前模式不支持"));
+                        + (ok ? "" : activity.getString(R.string.transfer_mode_unsupported)));
 
                 if (ok) {
                     // The checkbox itself is not clickable so the whole row is the touch target.

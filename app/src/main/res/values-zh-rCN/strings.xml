@@ -1,0 +1,288 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">TOTPull</string>
+    <string name="xposed_desc">Pulls TOTP seeds out of Riot Mobile, Steam and Google Authenticator.</string>
+
+    <string name="empty_title">还没有验证码</string>
+    <string name="empty_hint">点右下角 + 可以粘贴文本、选择备份文件或手动输入。\n支持 Aegis / Bitwarden / andOTP / 2FAS / FreeOTP / Google Authenticator / Steam 的导出格式，也可以直接在其他 App 里把验证码分享过来。</string>
+
+    <string name="action_import">导入</string>
+    <string name="action_from_app">从应用导入</string>
+    <string name="action_paste">从剪贴板导入</string>
+    <string name="action_file">从文件导入</string>
+    <string name="import_failed">没有识别出可导入的条目</string>
+    <string name="import_ok">从 %1$s 导入了 %2$d 条</string>
+
+    <!-- Aegis 加密备份 -->
+    <string name="import_aegis_title">解密 Aegis 备份</string>
+    <string name="import_aegis_hint">备份密码</string>
+    <string name="import_aegis_working">正在解密备份…</string>
+    <string name="import_aegis_wrong_password">密码不正确</string>
+    <string name="import_aegis_biometric_only">这份备份只绑定了生物识别，请在 Aegis 里改用密码重新导出</string>
+    <string name="import_aegis_bad_format">文件不是有效的 Aegis 加密备份</string>
+    <string name="import_aegis_unsupported">不支持的 Aegis 备份版本</string>
+    <string name="action_add">添加</string>
+    <string name="copied">已复制 %1$s</string>
+    <string name="entry_menu_desc">拖动排序 / 分享</string>
+    <string name="entry_menu_share">分享</string>
+    <string name="entry_menu_share_qr">二维码分享</string>
+    <string name="entry_menu_share_uri">分享 otpauth 链接</string>
+    <string name="entry_menu_deeplink">发送到验证器</string>
+    <string name="entry_menu_bw_secret">复制 Bitwarden Authenticator 密钥</string>
+    <string name="steam_secret_copied">已复制 steam:// 密钥，可在 Bitwarden Authenticator 中导入</string>
+    <string name="action_scan">扫码导入</string>
+    <string name="scan_prompt">将二维码放入取景框</string>
+    <string name="nothing_in_clipboard">剪贴板里没有 otpauth 链接</string>
+    <string name="imported">导入了 %1$d 条</string>
+    <string name="bad_uri">无法解析这条链接</string>
+
+    <string name="delete">删除</string>
+    <string name="cancel">取消</string>
+    <string name="save">保存</string>
+    <string name="close">关闭</string>
+    <string name="delete_title">删除条目</string>
+    <string name="delete_message">确定删除 %1$s？</string>
+    <string name="delete_group_title">删除整组</string>
+    <string name="delete_group_message">确定删除「%1$s」的全部 %2$d 条？</string>
+    <string name="delete_group_done">已删除 %1$d 条</string>
+    <string name="group_menu_delete">删除整组</string>
+    <string name="group_menu_sync">从来源重新导入</string>
+    <string name="group_menu_export">导出该组</string>
+    <string name="edit_group_title">编辑组别</string>
+    <string name="group_rename_blank">名称不能为空</string>
+    <string name="settings_label_name">组别名称</string>
+    <string name="group_export_title">导出「%1$s」</string>
+    <string name="group_export_empty">这一组没有可导出的条目</string>
+    <string name="settings_label_source">来源应用</string>
+    <string name="settings_label_package">包名</string>
+    <string name="settings_label_count">条目数量</string>
+    <string name="settings_label_types">类型分布</string>
+    <string name="settings_no_package">无（本地条目）</string>
+    <string name="settings_unknown_source">未知来源</string>
+    <string name="settings_type_other">其他</string>
+
+    <string name="edit_title">编辑条目</string>
+    <string name="edit_title_new">新建条目</string>
+
+    <string name="field_name">名称</string>
+    <string name="field_issuer">服务商</string>
+    <string name="field_group">分组</string>
+    <string name="field_note">备注</string>
+    <string name="field_secret">密钥</string>
+    <string name="field_type">类型</string>
+    <string name="field_algorithm">哈希函数</string>
+    <string name="field_period">时间间隔（秒）</string>
+    <string name="field_digits">位数</string>
+    <string name="field_counter">计数器</string>
+    <string name="field_source">来源应用</string>
+    <string name="field_usage">使用计数</string>
+    <string name="field_last_used">上次使用</string>
+
+
+    <string name="unsupported_type">该类型暂不支持生成验证码</string>
+    <string name="manual_invalid">secret 不是合法的 Base32</string>
+    <string name="secret_required">请填写密钥</string>
+    <string name="never">从不</string>
+    <string name="local_source">本地添加</string>
+    <string name="entry_count">%1$d 个条目</string>
+    <string name="unnamed">未命名</string>
+
+    <string name="probe_title">从应用导入</string>
+    <string name="probe_requesting">正在向 %1$s 请求…</string>
+    <string name="probe_not_installed">没有安装 %1$s</string>
+    <string name="probe_empty">%1$s 里没找到验证码数据</string>
+    <string name="probe_wake_title">%1$s 没有响应</string>
+    <string name="probe_not_running">模块只在目标应用运行的时候才能读到数据，而 Android 会把发往后台应用的广播延后，所以需要把它叫到前台一次。\n\n点下面的按钮打开它，然后立刻切回本应用，导入会自动继续。\n\n如果该应用有分身，请打开你实际登录的那一个。</string>
+    <string name="probe_wake_open">去打开</string>
+    <string name="probe_parse_failed">读到的数据无法识别</string>
+    <string name="probe_vault_unreadable">保险库读不出来，内容已无法恢复。为了不覆盖，已停止写入；在系统设置里清除本应用数据即可重来。</string>
+    <string name="probe_save_failed">保险库写入失败</string>
+    <string name="probe_go_hint">在 %1$s 里打开一次验证码，读到后会自动返回</string>
+
+    <string name="report_title">导入结果</string>
+    <string name="report_ok">已读取到「%1$s」，已加入列表。</string>
+    <string name="report_duplicate">已读取到「%1$s」，但这条已经在列表里了。</string>
+    <string name="report_failed">没有读到验证码：%1$s</string>
+    <string name="report_timeout">在 %1$s 里没有等到验证码。打开它并显示一次验证码后再试。</string>
+    <string name="report_stay">知道了</string>
+    <string name="report_many">已读取到 %1$d 个验证码账号，新增 %2$d 个。</string>
+
+    <string name="notif_channel">导入结果</string>
+    <string name="notif_title">已读取到验证码</string>
+    <string name="notif_text">点按返回 TOTPull</string>
+
+    <string name="cap_root_ok">Root：已获得</string>
+    <string name="cap_open_manager">授权管理器</string>
+    <string name="cap_no_manager">没找到 KernelSU 或 Magisk</string>
+    <string name="cap_detect">重新检测</string>
+    <string name="cap_start">开始使用</string>
+    <string name="cap_detecting">正在检测…</string>
+
+    <!-- 底栏 -->
+    <string name="nav_codes">验证码</string>
+    <string name="nav_info">信息</string>
+    <string name="codes_subtitle">%1$d 个条目 · %2$d 个来源</string>
+    <string name="codes_subtitle_empty">还没有任何条目</string>
+    <string name="codes_subtitle_filtered">显示 %1$d / %2$d 条</string>
+
+    <!-- 搜索与筛选 -->
+    <string name="search_hint">搜索名称、账号或备注</string>
+    <string name="search_clear">清除搜索</string>
+    <string name="filter_title">筛选验证码</string>
+    <string name="filter_all">全部</string>
+    <string name="filter_source">来源</string>
+    <string name="filter_type">类型</string>
+    <string name="filter_reset">重置</string>
+    <string name="filter_multi_hint">不勾选 = 全部显示，可多选</string>
+    <string name="filter_done">完成</string>
+    <string name="filter_active">筛选中</string>
+    <string name="filter_chip_idle">筛选</string>
+    <string name="filter_chip_active">筛选 · %1$d</string>
+    <string name="filter_type_totp">TOTP</string>
+    <string name="filter_type_hotp">HOTP</string>
+    <string name="filter_type_steam">Steam</string>
+    <string name="filter_type_other">其他</string>
+    <string name="filter_sort">排序</string>
+    <string name="sort_custom">自定义顺序（可拖拽调整）</string>
+    <string name="sort_name">按名称</string>
+    <string name="sort_recent">按最近使用</string>
+    <string name="transfer_no_match">没有匹配的条目</string>
+    <string name="empty_filtered_title">没有匹配的验证码</string>
+    <string name="empty_filtered_hint">换个关键词，或把筛选条件重置一下。</string>
+
+    <!-- 信息页 -->
+    <string name="info_badge">当前模式</string>
+    <string name="info_section_perm">权限</string>
+    <string name="info_section_feature">功能</string>
+    <string name="info_section_about">关于</string>
+
+    <string name="info_level_full">全功能模式</string>
+    <string name="info_level_module">模块模式</string>
+    <string name="info_level_standard">标准模式</string>
+    <string name="info_level_partial">部分就绪</string>
+    <string name="info_level_busy">等待授权</string>
+    <string name="info_level_undetected">未检测</string>
+
+    <string name="row_root">Root</string>
+    <string name="row_root_granted">已授予</string>
+    <string name="row_root_denied">未授予</string>
+    <string name="row_root_timeout">无响应</string>
+    <string name="row_root_unknown">未检测</string>
+    <string name="row_lsposed">Lsposed</string>
+    <string name="row_lsposed_on">已就绪</string>
+    <string name="row_lsposed_off">未就绪</string>
+
+
+
+    <string name="row_extract">从应用导入</string>
+    <string name="row_extract_ok">可用</string>
+    <string name="row_extract_unconfirmed">未确认</string>
+
+    <string name="row_fast">快速通道</string>
+
+    <string name="row_export">导出全部</string>
+    <string name="export_title">导出全部</string>
+    <string name="export_otpauth">otpauth 链接</string>
+    <string name="export_aegis">Aegis JSON</string>
+    <string name="export_deeplink">Deep link</string>
+    <string name="export_qr">Google 验证器二维码</string>
+    <string name="export_subject">TOTPull 导出（%1$d 条）</string>
+    <string name="export_empty">没有可导出的条目</string>
+    <string name="export_failed">导出失败</string>
+    <string name="deeplink_shared">已生成迁移链接，安装了本应用的设备点击即可导入</string>
+    <string name="deeplink_pick_title">选择要导入的验证器</string>
+    <string name="deeplink_batch_title">选择要发送的批次</string>
+    <string name="deeplink_batch_item">第 %1$d / %2$d 批 · 条目 %3$d–%4$d</string>
+    <string name="deeplink_batch_sent_mark"> · 已发送 ✓</string>
+    <string name="deeplink_all_sent">全部批次已发送完成</string>
+    <string name="deeplink_no_handler">没有验证器支持深链导入，可用「Google 验证器二维码」方式</string>
+    <string name="deeplink_sent">已交给 %1$s 导入</string>
+    <string name="deeplink_fallback_qr">本机的验证器不支持批量深链导入，改用二维码方式</string>
+    <string name="export_qr_title">迁移二维码</string>
+    <string name="qr_pages_suffix">（共 %1$d 页）</string>
+    <string name="migration_collected_suffix">（已收集 %1$d / %2$d 页）</string>
+    <string name="migration_remaining_prefix">，还有 %1$d 页未导入</string>
+    <string name="qr_hint">用 Google 验证器的「导入账号 → 扫描二维码」读取</string>
+    <string name="qr_hint_multi">每张二维码最多 10 条，用下方按钮翻页</string>
+    <string name="qr_prev">上一张</string>
+    <string name="qr_next">下一张</string>
+    <string name="qr_page">第 %1$d / %2$d 张</string>
+
+
+    <string name="row_version">版本</string>
+    <string name="row_target">支持的应用</string>
+
+    <!-- 导入/导出确认管理器 -->
+    <string name="transfer_import_title">导入确认</string>
+    <string name="transfer_export_title">导出确认</string>
+    <string name="transfer_summary_import">本次导入 %1$d 条 · 来源：%2$s</string>
+    <string name="transfer_summary_export">本次导出 %1$d 条</string>
+    <string name="transfer_summary_export_full">共 %1$d 条 · 支持导出 %2$d 条</string>
+    <string name="transfer_selected">已选 %1$d 条</string>
+    <string name="transfer_select_all">全选</string>
+    <string name="transfer_invert">反转</string>
+    <string name="transfer_import_confirm">导入（%1$d 条）</string>
+    <string name="transfer_export_confirm">导出（%1$d 条）</string>
+    <string name="transfer_type_steam">Steam</string>
+    <string name="transfer_type_hotp">HOTP</string>
+    <string name="transfer_type_totp">TOTP</string>
+    <string name="transfer_mode_unsupported">\u0020· 当前模式不支持</string>
+    <string name="scan_gallery_no_qr">这张图片里没有识别到二维码</string>
+    <string name="scan_capture_failed">拍摄失败，请重试</string>
+
+    <!-- 导入方式 -->
+    <string name="route_aegis_title">Aegis 导入方式</string>
+    <string name="route_azure_title">Microsoft Authenticator 导入方式</string>
+    <string name="route_module_read">模块直读</string>
+    <string name="route_root_file">Root 读文件</string>
+    <string name="route_root_db">Root 读数据库</string>
+    <string name="root_timeout_hint">root 检测超时，请在授权管理器里允许 TOTPull 后重试</string>
+    <string name="root_needed_aegis">读 Aegis 需要 root；没有 root 请用文件导入</string>
+    <string name="root_needed_azure">读 Microsoft Authenticator 需要 root；没有 root 请用文件导入</string>
+    <string name="aegis_vault_unreadable">读不到 Aegis vault：%1$s</string>
+    <string name="azure_db_unreadable">读不到 Microsoft Authenticator 数据：%1$s</string>
+
+    <!-- 目标应用标签 -->
+    <string name="language">语言</string>
+    <string name="language_system">跟随系统</string>
+    <string name="language_zh">简体中文</string>
+    <string name="language_en">English</string>
+
+    <!-- 解析诊断 -->
+    <string name="diag_su_timeout">su 没有响应（超时）</string>
+    <string name="diag_temp_dir">无法创建临时目录</string>
+    <string name="format_plain_text">文本</string>
+    <string name="format_google_migration">Google Authenticator（迁移链接）</string>
+    <string name="format_bare_secret">裸 secret</string>
+    <string name="format_generic_json">通用 JSON</string>
+    <string name="format_generic_json_array">通用 JSON 数组</string>
+    <string name="warn_migration_parse">迁移链接解析失败</string>
+    <string name="warn_skip_unparsed_uri">跳过一条无法解析的 otpauth URI</string>
+    <string name="warn_skip_unsupported_type">跳过一条不支持的类型（mOTP / Yandex）</string>
+    <string name="warn_json_parse">JSON 解析失败</string>
+    <string name="warn_skip_bad_secret">跳过一条 secret 非法的条目</string>
+    <string name="warn_skip_bad_2fas">跳过一条 2FAS secret 非法的条目</string>
+    <string name="warn_skip_bad_freeotp">跳过一条 FreeOTP secret 非法的条目</string>
+    <string name="warn_mafile_secret">maFile 的 shared_secret 无法解码</string>
+
+    <!-- 模块侧探测回复 -->
+    <string name="hook_aegis_locked">Aegis 还没解锁，请先解锁一次 Aegis，模块读到后会自动回来</string>
+    <string name="hook_aegis_wrap_failed">Aegis 条目封装失败</string>
+    <string name="hook_riot_no_storage">模块还没捕获到加密存储，请在 Riot Mobile 里打开一次登录页</string>
+    <string name="hook_riot_no_codes">加密存储读到了，但里面还没有验证码，先在 Riot Mobile 里生成一次</string>
+    <string name="hook_riot_bad_key">拿到的密钥格式无法识别</string>
+    <string name="hook_ga_no_accounts">没能从谷歌验证器读到验证码账号，确认它已经登录并显示过验证码</string>
+    <string name="hook_azure_no_accounts">没能从 Microsoft Authenticator 读到验证码账号，确认它已经登录并显示过验证码</string>
+    <string name="hook_steam_no_secret">没读到 Steam Guard 密钥，确认这台机器上登录过 Steam 手机令牌</string>
+
+    <!-- 扫码页 -->
+    <string name="scan_camera_permission">需要相机权限才能扫码</string>
+    <string name="scan_grant_camera">授权相机</string>
+    <string name="scan_collected_page">已收集第 %1$d/%2$d 页（%3$d 条）</string>
+    <string name="scan_capture">拍摄</string>
+    <string name="scan_gallery">相册</string>
+    <string name="scan_page_done">第 %1$d 页 ✓ %2$d 条</string>
+    <string name="scan_page_pending">第 %1$d 页 ·</string>
+    <string name="scan_batch_status">%1$d 条 · %2$d/%3$d 页</string>
+    <string name="scan_import_direct">直接导入</string>
+</resources>

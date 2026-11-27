@@ -9,6 +9,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
+import io.blockman.totpull.AppStrings;
+import io.blockman.totpull.R;
 import io.blockman.totpull.TotpEntry;
 import io.blockman.totpull.TotpGenerator;
 
@@ -70,7 +72,7 @@ public final class ImportEngine {
 
         try {
             if (MigrationImporter.looksLike(t)) {
-                result.detectedFormat = "Google Authenticator（迁移链接）";
+                result.detectedFormat = AppStrings.get(R.string.format_google_migration);
                 // The text may carry several migration pages (ScanActivity batches them);
                 // merge every line, keeping the largest size and the distinct page count.
                 java.util.TreeSet<Integer> seenPages = new java.util.TreeSet<>();
@@ -87,7 +89,7 @@ public final class ImportEngine {
                                 Math.max(1, batch.size)));
                         result.entries.addAll(batch.entries);
                     } catch (Exception e) {
-                        result.warnings.add("迁移链接解析失败");
+                        result.warnings.add(AppStrings.get(R.string.warn_migration_parse));
                     }
                 }
                 result.migrationPages = seenPages.size();
@@ -125,10 +127,10 @@ public final class ImportEngine {
             if (t.matches("[A-Za-z0-9+=\\-\\s]+")) {
                 String secret = TotpGenerator.normalizeAnySecret(t);
                 if (TotpGenerator.isValidBase32(secret)) {
-                    result.detectedFormat = "裸 secret";
+                    result.detectedFormat = AppStrings.get(R.string.format_bare_secret);
                     TotpEntry entry = new TotpEntry();
                     entry.secret = secret;
-                    entry.issuer = "未命名";
+                    entry.issuer = "";
                     entry.name = "";
                     result.entries.add(entry);
                 }
@@ -173,7 +175,7 @@ public final class ImportEngine {
                     result.migrationPages++;
                     result.entries.addAll(batch.entries);
                 } catch (Exception e) {
-                    result.warnings.add("迁移链接解析失败");
+                    result.warnings.add(AppStrings.get(R.string.warn_migration_parse));
                 }
                 continue;
             }
@@ -183,9 +185,9 @@ public final class ImportEngine {
             found = true;
             TotpEntry entry = TotpEntry.fromOtpauth(candidate);
             if (entry == null) {
-                result.warnings.add("跳过一条无法解析的 otpauth URI");
+                result.warnings.add(AppStrings.get(R.string.warn_skip_unparsed_uri));
             } else if (!entry.isSupported()) {
-                result.warnings.add("跳过一条不支持的类型（mOTP / Yandex）");
+                result.warnings.add(AppStrings.get(R.string.warn_skip_unsupported_type));
             } else {
                 result.entries.add(entry);
             }
@@ -263,7 +265,7 @@ public final class ImportEngine {
                         result.detectedFormat = "Aegis JSON";
                         parseAegis(root, result);
                     } else {
-                        result.detectedFormat = "通用 JSON";
+                        result.detectedFormat = AppStrings.get(R.string.format_generic_json);
                         parseGenericEntries(entries, result);
                     }
                 }
@@ -282,11 +284,11 @@ public final class ImportEngine {
                 result.detectedFormat = "andOTP JSON";
                 parseAndOtp(array, result);
             } else {
-                result.detectedFormat = "通用 JSON 数组";
+                result.detectedFormat = AppStrings.get(R.string.format_generic_json_array);
                 parseGenericEntries(array, result);
             }
         } catch (Exception e) {
-            result.warnings.add("JSON 解析失败");
+            result.warnings.add(AppStrings.get(R.string.warn_json_parse));
         }
     }
 
@@ -327,7 +329,7 @@ public final class ImportEngine {
             }
             String secret = TotpGenerator.normalizeAnySecret(info.optString("secret", ""));
             if (!TotpGenerator.isValidBase32(secret)) {
-                result.warnings.add("跳过一条 secret 非法的条目");
+                result.warnings.add(AppStrings.get(R.string.warn_skip_bad_secret));
                 continue;
             }
 
@@ -356,7 +358,7 @@ public final class ImportEngine {
             // mOTP / Yandex are disabled app-wide: importing them would create invisible
             // entries, so parsed rows of those types are dropped with a warning.
             if (!entry.isSupported()) {
-                result.warnings.add("跳过一条不支持的类型（mOTP / Yandex）");
+                result.warnings.add(AppStrings.get(R.string.warn_skip_unsupported_type));
                 continue;
             }
 
@@ -370,7 +372,7 @@ public final class ImportEngine {
             entry.sourcePackage = "com.beemdevelopment.aegis";
 
             if (entry.issuer.isEmpty()) {
-                entry.issuer = entry.name.isEmpty() ? "未命名" : entry.name;
+                entry.issuer = entry.name;
             }
             result.entries.add(entry);
         }
@@ -414,7 +416,7 @@ public final class ImportEngine {
             if (entry.name.isEmpty()) {
                 entry.name = login.optString("username", "");
             }
-            if (entry.issuer.isEmpty() || "未命名".equals(entry.issuer)) {
+            if (entry.issuer.isEmpty()) {
                 entry.issuer = item.optString("name", entry.issuer);
             }
             entry.note = item.optString("notes", "");
@@ -458,7 +460,7 @@ public final class ImportEngine {
             entry.sourcePackage = "org.shadowice.flocke.andotp";
 
             if (entry.issuer.isEmpty()) {
-                entry.issuer = entry.name.isEmpty() ? "未命名" : entry.name;
+                entry.issuer = entry.name;
             }
             result.entries.add(entry);
         }
@@ -477,7 +479,7 @@ public final class ImportEngine {
             }
             String secret = TotpGenerator.normalizeAnySecret(o.optString("secret", ""));
             if (!TotpGenerator.isValidBase32(secret)) {
-                result.warnings.add("跳过一条 2FAS secret 非法的条目");
+                result.warnings.add(AppStrings.get(R.string.warn_skip_bad_2fas));
                 continue;
             }
             TotpEntry entry = new TotpEntry();
@@ -517,7 +519,7 @@ public final class ImportEngine {
             entry.sourcePackage = "com.twofasapp";
 
             if (entry.issuer.isEmpty()) {
-                entry.issuer = entry.name.isEmpty() ? "未命名" : entry.name;
+                entry.issuer = entry.name;
             }
             result.entries.add(entry);
         }
@@ -535,7 +537,7 @@ public final class ImportEngine {
             }
             String secret = TotpGenerator.normalizeAnySecret(o.optString("secret", ""));
             if (!TotpGenerator.isValidBase32(secret)) {
-                result.warnings.add("跳过一条 FreeOTP secret 非法的条目");
+                result.warnings.add(AppStrings.get(R.string.warn_skip_bad_freeotp));
                 continue;
             }
             TotpEntry entry = new TotpEntry();
@@ -561,7 +563,7 @@ public final class ImportEngine {
             entry.sourcePackage = "org.fedorahosted.freeotp";
 
             if (entry.issuer.isEmpty()) {
-                entry.issuer = entry.name.isEmpty() ? "未命名" : entry.name;
+                entry.issuer = entry.name;
             }
             result.entries.add(entry);
         }
@@ -575,7 +577,7 @@ public final class ImportEngine {
     private static void parseSteamMaFile(JSONObject root, Result result) {
         byte[] bytes = TotpGenerator.base64Decode(root.optString("shared_secret", ""));
         if (bytes.length < 10) {
-            result.warnings.add("maFile 的 shared_secret 无法解码");
+            result.warnings.add(AppStrings.get(R.string.warn_mafile_secret));
             return;
         }
         TotpEntry entry = new TotpEntry();
@@ -612,7 +614,7 @@ public final class ImportEngine {
             entry.note = o.optString("note", o.optString("notes", ""));
             entry.group = o.optString("group", "");
             if (entry.issuer.isEmpty()) {
-                entry.issuer = entry.name.isEmpty() ? "未命名" : entry.name;
+                entry.issuer = entry.name;
             }
             result.entries.add(entry);
         }
@@ -715,7 +717,7 @@ public final class ImportEngine {
             if (entry == null) {
                 continue;
             }
-            if (entry.issuer.isEmpty() || "未命名".equals(entry.issuer)) {
+            if (entry.issuer.isEmpty()) {
                 String fallback = value(row, issuerIndex);
                 if (!fallback.isEmpty()) {
                     entry.issuer = fallback;

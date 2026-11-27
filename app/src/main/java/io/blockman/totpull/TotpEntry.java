@@ -73,9 +73,10 @@ public class TotpEntry {
 
     public String displayName() {
         if (issuer != null && issuer.length() > 0) {
-            return issuer;
+            // Older vaults stored the literal Chinese default; show it localized.
+            return "未命名".equals(issuer) ? AppStrings.get(R.string.unnamed) : issuer;
         }
-        return name == null || name.isEmpty() ? "未命名" : name;
+        return name == null || name.isEmpty() ? AppStrings.get(R.string.unnamed) : name;
     }
 
     public String displayAccount() {
@@ -172,6 +173,11 @@ public class TotpEntry {
         e.lastUsedAt = o.optLong("lastUsedAt", 0);
         e.sourcePackage = o.optString("sourcePackage", "");
         e.sourceLabel = o.optString("sourceLabel", "");
+        // One-time normalization: the old Chinese label was stored verbatim; both locales
+        // now use the English product name.
+        if ("谷歌验证器".equals(e.sourceLabel)) {
+            e.sourceLabel = "Google Authenticator";
+        }
         return e;
     }
 
@@ -275,7 +281,7 @@ public class TotpEntry {
         e.period = period;
         e.counter = counter;
         if (e.issuer.isEmpty()) {
-            e.issuer = e.name.isEmpty() ? "未命名" : e.name;
+            e.issuer = e.name;
         }
         return e;
     }

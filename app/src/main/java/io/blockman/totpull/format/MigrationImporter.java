@@ -204,7 +204,7 @@ public final class MigrationImporter {
         entry.sourcePackage = "com.google.android.apps.authenticator2";
 
         if (entry.issuer.isEmpty()) {
-            entry.issuer = entry.name.isEmpty() ? "未命名" : entry.name;
+            entry.issuer = entry.name;
         }
         return entry;
     }

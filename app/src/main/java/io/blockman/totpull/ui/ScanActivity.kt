@@ -79,6 +79,9 @@ import top.yukonga.miuix.kmp.basic.Text
  * default CaptureActivity, so the look matches the rest of the app.
  */
 class ScanActivity : AppCompatActivity() {
+    override fun attachBaseContext(base: android.content.Context) {
+        super.attachBaseContext(io.blockman.totpull.LocaleHelper.wrap(base))
+    }
 
     companion object {
         const val EXTRA_TEXT = "extra_text"
@@ -223,7 +226,7 @@ private fun QrScanScreen(onResult: (String) -> Unit, onClose: () -> Unit) {
                 verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center
             ) {
                 Text(
-                    "需要相机权限才能扫码",
+                    stringResource(R.string.scan_camera_permission),
                     color = Color.White,
                     fontSize = 16.sp,
                     textAlign = TextAlign.Center
@@ -232,7 +235,7 @@ private fun QrScanScreen(onResult: (String) -> Unit, onClose: () -> Unit) {
                     onClick = { launcher.launch(Manifest.permission.CAMERA) },
                     modifier = Modifier.padding(top = 20.dp)
                 ) {
-                    Text("授权相机")
+                    Text(stringResource(R.string.scan_grant_camera))
                 }
             }
         }
@@ -284,7 +287,8 @@ private fun ScannerContent(onResult: (String) -> Unit, onClose: () -> Unit) {
                 bufferedCounts = bufferedCounts + (batch.index to batch.entries.size)
                 if (isNew) {
                     Toast.makeText(context,
-                            "已收集第 ${batch.index + 1}/${batch.size} 页（${batch.entries.size} 条）",
+                            context.getString(R.string.scan_collected_page,
+                            batch.index + 1, batch.size, batch.entries.size),
                             Toast.LENGTH_SHORT).show()
                 }
                 if (bufferedPages.size >= batch.size) {
@@ -491,7 +495,7 @@ private fun ScannerContent(onResult: (String) -> Unit, onClose: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
-            "拍摄",
+            stringResource(R.string.scan_capture),
             color = Color.White.copy(alpha = 0.9f),
             fontSize = 15.sp,
             textAlign = TextAlign.Center,
@@ -501,7 +505,7 @@ private fun ScannerContent(onResult: (String) -> Unit, onClose: () -> Unit) {
                 .padding(top = 10.dp)
         )
         Text(
-            "相册",
+            stringResource(R.string.scan_gallery),
             color = Color.White.copy(alpha = 0.9f),
             fontSize = 15.sp,
             textAlign = TextAlign.Center,
@@ -535,7 +539,8 @@ private fun ScannerContent(onResult: (String) -> Unit, onClose: () -> Unit) {
                 val got = bufferedPages.containsKey(page - 1)
                 val count = bufferedCounts[page - 1]
                 Text(
-                    if (got) "第 $page 页 ✓ ${count ?: 0}条" else "第 $page 页 ·",
+                    if (got) stringResource(R.string.scan_page_done, page, count ?: 0)
+                    else stringResource(R.string.scan_page_pending, page),
                     color = if (got) Color(0xFF66D17A)
                             else Color.White.copy(alpha = 0.55f),
                     fontSize = 13.sp,
@@ -543,14 +548,15 @@ private fun ScannerContent(onResult: (String) -> Unit, onClose: () -> Unit) {
                 )
             }
             Text(
-                "共 ${bufferedCounts.values.sum()} 条 · ${bufferedPages.size}/${bufferSize} 页",
+                stringResource(R.string.scan_batch_status,
+                        bufferedCounts.values.sum(), bufferedPages.size, bufferSize),
                 color = Color.White.copy(alpha = 0.7f),
                 fontSize = 12.sp,
                 modifier = Modifier.padding(top = 4.dp)
             )
         }
         Text(
-            "直接导入",
+            stringResource(R.string.scan_import_direct),
             color = Color(0xFF8FB6FF),
             fontSize = 14.sp,
             modifier = Modifier

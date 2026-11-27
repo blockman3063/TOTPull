@@ -206,7 +206,7 @@ public final class Capabilities {
             String path = prefix + packageName + "/files/" + SNAPSHOT_NAME;
             Shell result = su("cat " + path, 8000);
             if (result == null) {
-                lastDiagnostic = "su 没有响应（超时）";
+                lastDiagnostic = AppStrings.get(R.string.diag_su_timeout);
                 return null;
             }
             attempts.append(path).append(": exit=").append(result.exitCode).append('\n');
@@ -227,7 +227,7 @@ public final class Capabilities {
             String path = prefix + "com.beemdevelopment.aegis/files/aegis.json";
             Shell result = su("cat " + path, 8000);
             if (result == null) {
-                lastDiagnostic = "su 没有响应（超时）";
+                lastDiagnostic = AppStrings.get(R.string.diag_su_timeout);
                 return null;
             }
             String detail = brief(result.output, 200);
@@ -254,7 +254,7 @@ public final class Capabilities {
     public static File copyAzureDatabase(Context context) {
         File dir = new File(context.getFilesDir(), "azure_tmp");
         if (!dir.exists() && !dir.mkdirs()) {
-            lastDiagnostic = "无法创建临时目录";
+            lastDiagnostic = AppStrings.get(R.string.diag_temp_dir);
             return null;
         }
         StringBuilder attempts = new StringBuilder();
@@ -267,7 +267,7 @@ public final class Capabilities {
                     + "chmod 666 " + dstDir + "/PhoneFactor* 2>/dev/null";
             Shell result = su(cmd, 8000);
             if (result == null) {
-                lastDiagnostic = "su 没有响应（超时）";
+                lastDiagnostic = AppStrings.get(R.string.diag_su_timeout);
                 return null;
             }
             File db = new File(dir, "PhoneFactor");
